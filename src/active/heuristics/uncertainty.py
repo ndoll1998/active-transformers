@@ -12,7 +12,15 @@ class UncertaintyHeuristic(ActiveHeuristic):
         logits = self.model(**batch).logits
         probs = torch.softmax(logits, dim=-1)
         # compute uncertainty scores
-        return self.uncertainty(probs)
+        scores = self.uncertainty(probs)
+        
+        if scores.ndim == 1:
+            # no average computations needed
+            return scores
+        # compute average over valid input tokens
+        mask = batch['attention_mask']
+        scores[~mask, ...] = 0.0
+        return scores.flatten(start_dim=1).sum(dim=1) / mask.sum(dim=1)
 
     @abstractmethod
     def uncertainty(self, probs:torch.Tensor) -> torch.Tensor:

@@ -34,7 +34,7 @@ class Evaluator(Engine):
 
     @staticmethod
     def get_loss(out:dict):
-        return out['loss']
+        return out['loss'].mean()
 
 class Trainer(Evaluator):
     
@@ -55,7 +55,7 @@ class Trainer(Evaluator):
         self.optim.zero_grad()
         out = self.model.forward(**batch)
         # optimizer parameters
-        out.loss.backward()
+        type(self).get_loss(out).backward()
         self.optim.step()
         # detach and move to cpu
         out = {key: val.detach().cpu() if isinstance(val, torch.Tensor) else val for key, val in out.items()}
