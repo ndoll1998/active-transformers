@@ -1,5 +1,6 @@
 # torch and transformers
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedModel
 # ignite
@@ -17,7 +18,7 @@ class ActiveHeuristic(Engine, ABC):
         model:PreTrainedModel
     ) -> None:
         # save model
-        self.model = idist.auto_model(model) if model is not None else None
+        self.model = idist.auto_model(model) if isinstance(model, nn.Module) else model
         # initialize engine
         super(ActiveHeuristic, self).__init__(self.step)
         # add output storage handler to self
