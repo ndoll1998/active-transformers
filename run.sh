@@ -1,32 +1,62 @@
 export PYTHONPATH=.
-export CUDA_VISIBLE_DEVICES='3'
+export CUDA_VISIBLE_DEVICES='0'
+export WANDB_MODE='online'
 
-if false; then
-    # parameters from https://huggingface.co/gunghio/distilbert-base-multilingual-cased-finetuned-conll2003-ner
-    python scripts/train_naive.py \
-        --lang en \
-        --pretrained-ckpt distilbert-base-uncased \
-        --lr 2e-5 \
-        --epochs 45 \
-        --epoch-length 64 \
-        --batch-size 16 \
-        --max-length 128 \
-        --use-cache False
-fi
+DATASET=src/data/costumer_reviews.py
+MAX_EPOCHS=15
+MAX_LENGTH=50
 
-if true; then
-    python scripts/train_active.py \
-        --lang en \
-        --pretrained-ckpt distilbert-base-uncased \
+# for SEED in 2567556381 20884829 1872321349 3003095696 72456076
+for SEED in 3003095696 72456076
+do
+
+    python scripts/al_seq_cls_bert_v2.py \
+        --dataset $DATASET \
+        --pretrained-ckpt bert-base-uncased \
         --heuristic least-confidence \
-        --lr 2e-5 \
-        --steps 100 \
-        --epochs 45 \
-        --epoch-length 64 \
-        --batch-size 16 \
-        --query-size 8 \
-        --patience 8 \
-        --max-length 128 \
-        --use-cache False \
-        --seed 1337
-fi
+        --epochs $MAX_EPOCHS \
+        --max-length $MAX_LENGTH \
+        --seed $SEED
+done
+
+exit
+
+python scripts/al_seq_cls_bert_v2.py \
+    --dataset $DATASET \
+    --pretrained-ckpt bert-base-uncased \
+    --heuristic random \
+    --epochs $MAX_EPOCHS \
+    --max-length $MAX_LENGTH \
+    --seed 1337
+
+python scripts/al_seq_cls_bert_v2.py \
+    --dataset $DATASET \
+    --pretrained-ckpt bert-base-uncased \
+    --heuristic least-confidence \
+    --epochs $MAX_EPOCHS \
+    --max-length $MAX_LENGTH \
+    --seed 42
+
+python scripts/al_seq_cls_bert_v2.py \
+    --dataset $DATASET \
+    --pretrained-ckpt bert-base-uncased \
+    --heuristic least-confidence \
+    --epochs $MAX_EPOCHS \
+    --max-length $MAX_LENGTH \
+    --seed 1337
+
+python scripts/al_seq_cls_bert_v2.py \
+    --dataset $DATASET \
+    --pretrained-ckpt bert-base-uncased \
+    --heuristic prediction-entropy \
+    --epochs $MAX_EPOCHS \
+    --max-length $MAX_LENGTH \
+    --seed 42
+
+python scripts/al_seq_cls_bert_v2.py \
+    --dataset $DATASET \
+    --pretrained-ckpt bert-base-uncased \
+    --heuristic prediction-entropy \
+    --epochs $MAX_EPOCHS \
+    --max-length $MAX_LENGTH \
+    --seed 1337

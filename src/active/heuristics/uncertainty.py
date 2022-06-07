@@ -30,3 +30,8 @@ class LeastConfidence(UncertaintyHeuristic):
 
     def uncertainty(self, probs:torch.Tensor) -> torch.Tensor:
         return (1 - probs.max(dim=-1).values)
+
+class PredictionEntropy(UncertaintyHeuristic):
+
+    def uncertainty(self, probs:torch.Tensor) -> torch.Tensor:
+        return torch.special.entr(probs).sum(dim=-1)
