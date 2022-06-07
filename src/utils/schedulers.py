@@ -7,7 +7,7 @@ class _TrainingStepsDependentMixin(_LRScheduler):
     @property
     def num_training_steps(self) -> int:
         if not hasattr(self, '_num_training_steps'):
-            warnings.warn("Number of training steps not set!")
+            warnings.warn("Number of training steps not set!", UserWarning)
             return -1
         return self._num_training_steps
 

@@ -28,10 +28,10 @@ class Evaluator(Engine):
     ) -> None:
         # save model and initialize engine
         self.model = idist.auto_model(model)
-        super(Evaluator, self).__init__(self.step)
+        super(Evaluator, self).__init__(type(self).step)
 
     @torch.no_grad()
-    def step(self, engine, batch):
+    def step(self, batch):
         """ Evaluation step function """
         # move to device
         batch = {key: val.to(idist.device()) if isinstance(val, torch.Tensor) else val for key, val in batch.items()}
@@ -184,7 +184,7 @@ class Trainer(Evaluator):
         """ Final accuracy on training dataset """
         return self.train_evaluator.state.metrics['A']
     
-    def step(self, engine, batch):
+    def step(self, batch):
         """ Training step function executed by the engine. """
         # move to device
         batch = {key: val.to(idist.device()) if isinstance(val, torch.Tensor) else val for key, val in batch.items()}
