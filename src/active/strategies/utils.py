@@ -6,7 +6,7 @@ from typing import Union, Any, Sequence, Dict, Callable
 
 def map_tensors(
     tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor], 
-    fn:Callable[Tensor, Any]
+    fn:Callable[[Tensor], Any]
 ) -> Union[Dict[Any, Tensor], Sequence[Tensor], Tensor]:
     
     # trivial case
