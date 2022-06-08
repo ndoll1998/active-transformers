@@ -101,7 +101,7 @@ class TestTrainer:
                 assert (model.weight == cur_weight).all()
                 assert (model.bias == cur_bias).all()
                 
-            # on finish make sure the model weights are updated
+            # on finish update the current weights
             @trainer.on(Events.COMPLETED)
             def update_weights(engine):
                 cur_weight[:] = model.weight[:]
@@ -115,8 +115,6 @@ class TestTrainer:
         """ Test if the learning rate scheduler is prepared correctly, i.e.
             is the number of training steps set
         """
-        
-        
         # create model, optimizer and scheduler
         model = ClassificationModel(2, 2)
         optim = torch.optim.SGD(model.parameters(), lr=0.01)

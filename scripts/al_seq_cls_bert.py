@@ -33,8 +33,8 @@ from transformers import (
 )
 # import active learning components
 from src.active.loop import ActiveLoop
-from src.active.heuristics.random import Random
-from src.active.heuristics.uncertainty import (
+from src.active.strategies.random import Random
+from src.active.strategies.uncertainty import (
     LeastConfidence,
     PredictionEntropy
 )
@@ -103,7 +103,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="Train transformer model on the Conll2003 dataset. No active learning involved.")
     parser.add_argument("--dataset", type=str, default='ag_news', help="The text classification dataset to use. Must have features 'text' and 'label'.")
     parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
-    parser.add_argument("--heuristic", type=str, default="random", choices=['random', 'least-confidence', 'prediction-entropy'], help="Active Learning Heuristic to use")
+    parser.add_argument("--strategy", type=str, default="random", choices=['random', 'least-confidence', 'prediction-entropy'], help="Active Learning Strategy to use")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
     parser.add_argument("--steps", type=int, default=20, help="Number of Active Learning Steps")
     parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
@@ -160,7 +160,7 @@ if __name__ == '__main__':
         project='master-thesis',
         name="al-seq-cls-bert",
         config=config,
-        group="al-seq-cls-repr-val-v6-scheduler-params-incremental"
+        group="al-seq-cls-new"
     )
     # log train metrics after each train run
     logger.attach_output_handler(
@@ -188,17 +188,17 @@ if __name__ == '__main__':
         global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
     )
 
-    # create heuristic
-    if args.heuristic == 'random': heuristic = Random()
-    elif args.heuristic == 'least-confidence': heuristic = LeastConfidence(model)
-    elif args.heuristic == 'prediction-entropy': heuristic = PredictionEntropy(model)
-    # attach progress bar to heuristic
-    ProgressBar(desc='Heuristic').attach(heuristic)
+    # create strategy
+    if args.strategy == 'random': strategy = Random()
+    elif args.strategy == 'least-confidence': strategy = LeastConfidence(model)
+    elif args.strategy == 'prediction-entropy': strategy = PredictionEntropy(model)
+    # attach progress bar to strategy
+    ProgressBar(desc='Strategy').attach(strategy)
 
     # create active learning loop
     loop = ActiveLoop(
         pool=ds['train'],
-        heuristic=heuristic,
+        strategy=strategy,
         batch_size=64,
         query_size=args.query_size
     )

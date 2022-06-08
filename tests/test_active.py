@@ -2,9 +2,9 @@ import torch
 from torch.utils.data import Subset
 # import active learning components
 from src.active.loop import ActiveLoop
-from src.active.heuristics.heuristic import ActiveHeuristic
-from src.active.heuristics.random import Random
-from src.active.heuristics.uncertainty import LeastConfidence
+from src.active.strategies.strategy import AbstractStrategy
+from src.active.strategies.random import Random
+from src.active.strategies.uncertainty import LeastConfidence
 # helpers
 from .utils import NamedTensorDataset
 from types import SimpleNamespace
@@ -26,7 +26,7 @@ class TestActiveLoop:
             pool=pool,
             batch_size=4,
             query_size=4,
-            heuristic=Random()
+            strategy=Random()
         )
 
         # get all samples datasets
@@ -55,36 +55,36 @@ class TestActiveLoop:
             for B in idx_sets[i+1:]:
                 assert len(A & B) == 0
 
-class TestHeuristics:
-    """ Test cases for Heuristics """
+class TestStrategy:
+    """ Test cases for Strategies """
 
     def pseudo_model(self, **kwargs):
-        """ Pseudo Model used for testing Heustics. Returns input arguments as 
+        """ Pseudo Model used for testing Strategies. Returns input arguments as 
             namespace to allow access using dot-operator 
         """
         return SimpleNamespace(**kwargs)
 
-    def _test_heuristic_behavior(self, 
-        heuristic:ActiveHeuristic,
+    def _test_strategy_behavior(self, 
+        strategy:AbstractStrategy,
         pool:NamedTensorDataset,
         expected_order:List[int]
     ):
-        """ Helper function to test the behaviour of a heuristic. 
+        """ Helper function to test the behaviour of a strategy. 
 
             Args:
-                heuristic (ActiveHeuristic): heuristic to test
+                strategy (AbstractStrategy): strategy to test
                 pool (NamedTensorDataset): pool of data points
                 expected_order (List[int]): expected selection order of data points in the pool
 
-            Throws AssertionError if heuristic doesn't match expectation
+            Throws AssertionError if strategy doesn't match expectation
         """
         # create active loop
         loop = ActiveLoop(
             pool=pool,
             batch_size=len(pool),
             query_size=1,
-            heuristic=heuristic,
-            init_heuristic=heuristic
+            strategy=strategy,
+            init_strategy=strategy
         )
         # make sure sampling matches expectation
         for expected_idx, data in zip(expected_order, loop):
@@ -92,8 +92,8 @@ class TestHeuristics:
             assert expected_idx == sampled_idx
             
     def test_least_confidence(self):
-        # create a heuristic
-        heuristic = LeastConfidence(model=self.pseudo_model)
+        # create least confidence strategy
+        strategy = LeastConfidence(model=self.pseudo_model)
         # create a sample pool
         pool = NamedTensorDataset(
             logits=torch.FloatTensor([
@@ -122,9 +122,9 @@ class TestHeuristics:
                 [True, True, True]
             ])
         )
-        # test heuristic
-        self._test_heuristic_behavior(
-            heuristic=heuristic,
+        # test strategy
+        self._test_strategy_behavior(
+            strategy=strategy,
             pool=pool,
             expected_order=[0, 1, 2]
         )
