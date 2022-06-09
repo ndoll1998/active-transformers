@@ -7,18 +7,18 @@ from .strategy import AbstractStrategy
 from .utils import move_to_device
 
 from abc import abstractmethod
-from typing import Union, Sequence, Callable, Any
+from typing import Sequence, Any
 
 class UncertaintyStrategy(AbstractStrategy):
     
     def __init__(
         self,
-        model:Union[PreTrainedModel, Callable]
+        model:PreTrainedModel
     ) -> None:
         # initialize strategy
         super(UncertaintyStrategy, self).__init__()
         # move model to available device(s)
-        self.model = idist.auto_model(model) if isinstance(model, nn.Module) else model
+        self.model = idist.auto_model(model)
     
     @abstractmethod
     def uncertainty_measure(self, probs:torch.FloatTensor) -> torch.FloatTensor:
@@ -32,6 +32,7 @@ class UncertaintyStrategy(AbstractStrategy):
         # move batch to device
         batch = move_to_device(batch, device=idist.device())
         # apply model and get output logits
+        self.model.eval()
         logits = self.model(**batch).logits
         probs = torch.softmax(logits, dim=-1)
         # compute uncertainty scores
