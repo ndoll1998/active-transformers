@@ -2,6 +2,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
+from types import SimpleNamespace
+
+class PseudoModel(nn.Module):
+    """ Pseudo Model used for testing Strategies. Returns input arguments as 
+        namespace to allow access using dot-operator 
+    """
+    def forward(self, **kwargs):
+        return SimpleNamespace(**kwargs)
+        
 
 class ClassificationModel(nn.Linear):
     """ Simple linear classification model used for testing """

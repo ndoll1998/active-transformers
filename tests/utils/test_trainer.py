@@ -11,7 +11,7 @@ from src.utils.engines import Trainer, Events
 from src.utils.schedulers import LinearWithWarmup
 # import others
 import pytest
-from .utils import ClassificationModel, NamedTensorDataset
+from tests.common import ClassificationModel, NamedTensorDataset
 from tempfile import TemporaryDirectory
 
 class TestTrainer:
