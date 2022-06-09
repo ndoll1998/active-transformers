@@ -6,7 +6,11 @@ from torch.utils.data import Dataset, DataLoader
 from ignite.engine import Engine
 from ignite.handlers.stores import EpochOutputStore
 # others
-from .utils import map_tensors, concat_tensors
+from .utils import (
+    map_tensors, 
+    concat_tensors, 
+    default_collate_drop_labels
+)
 from functools import partial
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
@@ -74,7 +78,8 @@ class AbstractStrategy(Engine, ABC):
         loader = DataLoader(
             pool,
             batch_size=batch_size,
-            shuffle=False
+            shuffle=False,
+            collate_fn=default_collate_drop_labels
         )
         # reset output store and run the engine
         self.output_store.reset()

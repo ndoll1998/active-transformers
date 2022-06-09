@@ -1,8 +1,22 @@
 import torch
 from torch import Tensor
+from torch.utils.data import default_collate
 # typing
 import collections
 from typing import Union, Any, Sequence, Dict, Callable
+
+def default_collate_drop_labels(batch:Any) -> Any:
+    # collate batch
+    collated_batch = default_collate(batch)
+    # pop labels if present
+    if isinstance(collated_batch, collections.abc.Mapping):
+        batch_no_labels = {key: collated_batch[key] for key in collated_batch if key != 'labels'}
+        try:
+            collated_batch = type(collated_batch)(batch_no_labels)
+        except TypeError:
+            return batch_no_labels
+    # return collated batch
+    return collated_batch
 
 def map_tensors(
     tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor], 
@@ -25,7 +39,7 @@ def map_tensors(
     
     # handle mappings
     elif isinstance(tensors, collections.abc.Mapping):
-        moved_dict = {key: map_tensors(t, fn=fn) for key, t in tensors.items()}
+        moved_dict = {key: map_tensors(tensors[key], fn=fn) for key in tensors}
         # try to convert it to the same type
         try:
             return type(tensors)(moved_dict)
