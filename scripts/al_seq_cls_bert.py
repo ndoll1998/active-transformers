@@ -1,5 +1,5 @@
 """ Match exact setup from the paper Revisiting Uncertainty-based Query Strategies for Active Learning with Transformers
-    by Christoph Schröder et al. (https://arxiv.org/pdf/2107.05687.pdf).
+    by Christoph Schroeder et al. (https://arxiv.org/pdf/2107.05687.pdf).
     
     Experimental Setup:
         - query size: 25
@@ -16,7 +16,6 @@
             - lr: 2e-5
         - batch-size: 12
 """
-
 import os
 import re
 import torch
@@ -25,6 +24,7 @@ from torch.utils.data import (
     DataLoader,
     random_split
 )
+import numpy as np
 # datasets and transformers
 import datasets
 from transformers import (
@@ -38,6 +38,7 @@ from src.active.strategies.uncertainty import (
     LeastConfidence,
     PredictionEntropy
 )
+from src.active.strategies.badge import BadgeForSequenceClassification
 # import utilities
 from src.utils.engines import Trainer, Evaluator
 from src.utils.schedulers import LinearWithWarmup
@@ -103,7 +104,7 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="Train transformer model on the Conll2003 dataset. No active learning involved.")
     parser.add_argument("--dataset", type=str, default='ag_news', help="The text classification dataset to use. Must have features 'text' and 'label'.")
     parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
-    parser.add_argument("--strategy", type=str, default="random", choices=['random', 'least-confidence', 'prediction-entropy'], help="Active Learning Strategy to use")
+    parser.add_argument("--strategy", type=str, default="random", choices=['random', 'least-confidence', 'prediction-entropy', 'badge'], help="Active Learning Strategy to use")
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
     parser.add_argument("--steps", type=int, default=20, help="Number of Active Learning Steps")
     parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
@@ -120,7 +121,8 @@ if __name__ == '__main__':
 
     # set random seed
     torch.manual_seed(args.seed)
-   
+    np.random.seed(args.seed)
+
     # load tokenizer
     tokenizer = BertTokenizerFast.from_pretrained(args.pretrained_ckpt)
     # load and prepare dataset
@@ -160,7 +162,7 @@ if __name__ == '__main__':
         project='master-thesis',
         name="al-seq-cls-bert",
         config=config,
-        group="al-seq-cls-new"
+        group="al-seq-cls-new-test"
     )
     # log train metrics after each train run
     logger.attach_output_handler(
@@ -192,6 +194,7 @@ if __name__ == '__main__':
     if args.strategy == 'random': strategy = Random()
     elif args.strategy == 'least-confidence': strategy = LeastConfidence(model)
     elif args.strategy == 'prediction-entropy': strategy = PredictionEntropy(model)
+    elif args.strategy == 'badge': strategy = BadgeForSequenceClassification(model.bert, model.classifier)
     # attach progress bar to strategy
     ProgressBar(desc='Strategy').attach(strategy)
 
