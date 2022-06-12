@@ -39,6 +39,8 @@ from src.active.strategies.uncertainty import (
     PredictionEntropy
 )
 from src.active.strategies.badge import BadgeForSequenceClassification
+from src.active.strategies.alps import Alps
+from src.active.strategies.egl import EglForSequenceClassification
 # import utilities
 from src.utils.engines import Trainer, Evaluator
 from src.utils.schedulers import LinearWithWarmup
@@ -104,7 +106,10 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="Train transformer model on the Conll2003 dataset. No active learning involved.")
     parser.add_argument("--dataset", type=str, default='ag_news', help="The text classification dataset to use. Must have features 'text' and 'label'.")
     parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
-    parser.add_argument("--strategy", type=str, default="random", choices=['random', 'least-confidence', 'prediction-entropy', 'badge'], help="Active Learning Strategy to use")
+    parser.add_argument("--strategy", type=str, default="random", 
+        choices=['random', 'least-confidence', 'prediction-entropy', 'badge', 'alps', 'egl'], 
+        help="Active Learning Strategy to use"
+    )
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
     parser.add_argument("--steps", type=int, default=20, help="Number of Active Learning Steps")
     parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
@@ -162,7 +167,7 @@ if __name__ == '__main__':
         project='master-thesis',
         name="al-seq-cls-bert",
         config=config,
-        group="al-seq-cls-new-test"
+        group="al-seq-cls"
     )
     # log train metrics after each train run
     logger.attach_output_handler(
@@ -195,6 +200,8 @@ if __name__ == '__main__':
     elif args.strategy == 'least-confidence': strategy = LeastConfidence(model)
     elif args.strategy == 'prediction-entropy': strategy = PredictionEntropy(model)
     elif args.strategy == 'badge': strategy = BadgeForSequenceClassification(model.bert, model.classifier)
+    elif args.strategy == 'alps': strategy = Alps(model, mlm_prob=0.15)
+    elif args.strategy == 'egl': strategy = EglForSequenceClassification(model, k=3)
     # attach progress bar to strategy
     ProgressBar(desc='Strategy').attach(strategy)
 
@@ -203,9 +210,10 @@ if __name__ == '__main__':
         pool=ds['train'],
         strategy=strategy,
         batch_size=64,
-        query_size=args.query_size
+        query_size=args.query_size,
+        init_strategy=strategy if isinstance(strategy, (Alps, EglForSequenceClassification)) else Random()
     )
-
+    
     # active learning loop
     train_data, val_data = [], []
     for i, samples in enumerate(islice(loop, args.steps), 1):
@@ -235,6 +243,7 @@ if __name__ == '__main__':
             state = trainer.run(train_loader, max_epochs=args.epochs, epoch_length=args.epoch_length)
             print("Training Converged:", trainer.converged)
             print("Train Metrics:", state.metrics)
+            print("Final Train Accuracy:", trainer.train_accuracy)
             # check for convergence
             if trainer.converged:
                 break
