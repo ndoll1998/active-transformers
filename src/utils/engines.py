@@ -173,11 +173,8 @@ class Trainer(Evaluator):
     @property
     def converged(self) -> bool:
         """ Whether the training process converged """
-        # either stopped before maximum epochs or best model was hit previously
-        return (
-            (self.state.epoch < self.state.max_epochs) or \
-            ((hasattr(self, 'stopper')) and (self.stopper.counter > 0))
-        )
+        # convergence is met if engine terminated before maximum number of epochs
+        return self.state.epoch < self.state.max_epochs
 
     @property
     def train_accuracy(self) -> float:
