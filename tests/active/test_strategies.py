@@ -27,7 +27,7 @@ from tests.common import (
 )
 from typing import List
 
-class TestUncertaintyStratgies:
+class TestUncertaintyStrategies:
     """ Test cases for Uncertainty Strategies """
 
     def _test_strategy_behavior(self, 
