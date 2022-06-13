@@ -164,12 +164,8 @@ class TestExpectedGradientLength:
             # pass through model
             model.zero_grad()
             F.cross_entropy(model(x[i:i+1]), y[i:i+1]).backward()
-            # compute norm
-            manual_norm = sum(
-                (p.grad * p.grad).sum() 
-                for n, p in model.named_parameters() if 'weight' in n
-            )
-            # make sure norms match
+            # compute norm and check
+            manual_norm = sum((p.grad * p.grad).sum() for n, p in model.named_parameters())
             assert torch.allclose(manual_norm, goodfellow_norm[i]), "%.04f != %.04f" % (manual_norm, goodfellow_norm[i])
     
     def test_goodfellow_grad_norm_multiple_backward_passes(self):
@@ -213,9 +209,5 @@ class TestExpectedGradientLength:
                 model.zero_grad()
                 fn(model.forward(x[i:i+1])).backward()
                 # compute norm
-                manual_norm = sum(
-                    (p.grad * p.grad).sum() 
-                    for n, p in model.named_parameters() if 'weight' in n
-                )
-                # make sure norms match
+                manual_norm = sum((p.grad * p.grad).sum() for n, p in model.named_parameters())
                 assert torch.allclose(manual_norm, goodfellow_norm[i, j]), "%.04f != %.04f" % (manual_norm, goodfellow_norm[i, j])

@@ -74,8 +74,9 @@ class GoodfellowGradientNormForLinear(object):
                     in shape (b, m) where b is the batch size and m is
                     the number of backward calls.
         """
-        # concatenate batches
-        H = self.H.unsqueeze(1)
+        # stack gradients from multiple backward calls
+        # +1 to account for bias
+        H = self.H.unsqueeze(1) + 1.0
         Z_bar = torch.stack(self.Z_bar, dim=1)
         # check dimensions
         assert H.size(0) == Z_bar.size(0), "Mismatch between forward (%i) and backward (%i) calls" % (H.size(0), Z_bar.size(0))
