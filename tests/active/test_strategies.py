@@ -15,8 +15,7 @@ from src.active.strategies.badge import (
     BadgeForTokenClassification
 )
 from src.active.strategies.egl import (
-    GoodfellowGradientNorm,
-    EglForSequenceClassification
+    GoodfellowGradientNorm
 )
 # import helpers
 import pytest

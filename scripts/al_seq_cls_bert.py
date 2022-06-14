@@ -40,7 +40,12 @@ from src.active.strategies.uncertainty import (
 )
 from src.active.strategies.badge import BadgeForSequenceClassification
 from src.active.strategies.alps import Alps
-from src.active.strategies.egl import EglForSequenceClassification
+from src.active.strategies.egl import (
+    EglByTopK,
+    EglBySampling,
+    EglFastByTopK,
+    EglFastBySampling
+)
 # import utilities
 from src.utils.engines import Trainer, Evaluator
 from src.utils.schedulers import LinearWithWarmup
@@ -107,7 +112,7 @@ if __name__ == '__main__':
     parser.add_argument("--dataset", type=str, default='ag_news', help="The text classification dataset to use. Must have features 'text' and 'label'.")
     parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
     parser.add_argument("--strategy", type=str, default="random", 
-        choices=['random', 'least-confidence', 'prediction-entropy', 'badge', 'alps', 'egl'], 
+        choices=['random', 'least-confidence', 'prediction-entropy', 'badge', 'alps', 'egl', 'egl-fast', 'egl-sampling', 'egl-fast-sampling'], 
         help="Active Learning Strategy to use"
     )
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
@@ -201,17 +206,28 @@ if __name__ == '__main__':
     elif args.strategy == 'prediction-entropy': strategy = PredictionEntropy(model)
     elif args.strategy == 'badge': strategy = BadgeForSequenceClassification(model.bert, model.classifier)
     elif args.strategy == 'alps': strategy = Alps(model, mlm_prob=0.15)
-    elif args.strategy == 'egl': strategy = EglForSequenceClassification(model, k=3)
+    elif args.strategy == 'egl': strategy = EglByTopK(model, k=3)
+    elif args.strategy == 'egl-fast': strategy = EglFastByTopK(model, k=3)
+    elif args.strategy == 'egl-sampling': strategy = EglBySampling(model, k=5)
+    elif args.strategy == 'egl-fast-sampling': strategy = EglFastBySampling(model, k=5)
     # attach progress bar to strategy
     ProgressBar(desc='Strategy').attach(strategy)
 
+    # list of all strategies that can be also used as initial strategies,
+    # i.e. strategies that do necessarily depend on a finetuned model
+    valid_init_strategies = (
+        Alps,
+        EglByTopK,
+        EglBySampling,
+        EglFastBySampling
+    )
     # create active learning loop
     loop = ActiveLoop(
         pool=ds['train'],
         strategy=strategy,
         batch_size=64,
         query_size=args.query_size,
-        init_strategy=strategy if isinstance(strategy, (Alps, EglForSequenceClassification)) else Random()
+        init_strategy=strategy if isinstance(strategy, valid_init_strategies) else Random()
     )
     
     # active learning loop
