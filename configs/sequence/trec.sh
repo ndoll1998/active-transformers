@@ -2,6 +2,7 @@
 # Strategies for Active Learning with Transformers` by Christoph Schroeder 
 # et al. (https://arxiv.org/pdf/2107.05687.pdf).
   
+source configs/sequence/defaults.sh
 # specify experiment name and dataset
 EXPERIMENT=trec-6
 DATASET=trec

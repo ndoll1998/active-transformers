@@ -7,7 +7,7 @@ source $1
 # create random group id
 GROUP_ID=$(cat /proc/sys/kernel/random/uuid | head -c 8)
 # set up weights and biases
-export WANDB_MODE='online'
+export WANDB_MODE='disabled'
 export WANDB_PROJECT="active-transformers"
 export WANDB_NAME="al-seq-cls"
 export WANDB_RUN_GROUP="$EXPERIMENT-$GROUP_ID"
@@ -25,7 +25,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
     for STRATEGY in $STRATEGIES; do
 
         # run training
-        python scripts/al_seq_cls.py \
+        python $SCRIPT \
             --dataset $DATASET \
             --label-column $LABEL \
             --pretrained-ckpt $PRETRAINED_CKPT \

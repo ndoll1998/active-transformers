@@ -52,7 +52,8 @@ class Conll2003Processor(object):
             add_special_tokens=True, 
             padding='max_length', 
             truncation=True, 
-            max_length=self.max_length
+            max_length=self.max_length,
+            is_split_into_words=True
         )
         attention_mask = [token_id != self.tokenizer.pad_token_id for token_id in input_ids]
 

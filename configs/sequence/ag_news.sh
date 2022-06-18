@@ -2,12 +2,13 @@
 # Strategies for Active Learning with Transformers` by Christoph Schroeder 
 # et al. (https://arxiv.org/pdf/2107.05687.pdf).
   
+source configs/sequence/defaults.sh
 # specify experiment name and dataset
 EXPERIMENT=ag-news
 DATASET=ag_news
 LABEL=label
 # pretrained model to use
-PRETRAINED_CKPT=bert-large-uncased
+PRETRAINED_CKPT=distilroberta-base
 # optimization hyperparameters
 LR=2e-5
 LR_DECAY=0.975

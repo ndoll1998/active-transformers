@@ -1,7 +1,8 @@
 # Match exact setup from the paper `Revisiting Uncertainty-based Query 
 # Strategies for Active Learning with Transformers` by Christoph Schroeder 
 # et al. (https://arxiv.org/pdf/2107.05687.pdf).
-  
+
+source configs/sequence/defaults.sh
 # specify experiment name and dataset
 EXPERIMENT=costumer-reviews
 DATASET=./src/data/costumer_reviews.py
