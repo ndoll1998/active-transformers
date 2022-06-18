@@ -2,7 +2,7 @@ export PYTHONPATH=.
 export CUDA_VISIBLE_DEVICES='0'
 
 # load config
-source configs/trec.sh
+source $1
 
 # create random group id
 GROUP_ID=$(cat /proc/sys/kernel/random/uuid | head -c 8)
