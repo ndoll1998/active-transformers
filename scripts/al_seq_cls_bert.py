@@ -43,7 +43,7 @@ from ignite.contrib.handlers.wandb_logger import WandBLogger
 import wandb
 from itertools import islice
 
-def prepare_seq_cls_datasets(ds, tokenizer, max_length):
+def prepare_seq_cls_datasets(ds, tokenizer, max_length, label_column):
     # prepare datasets
     ds = {
         key: dataset \
@@ -60,7 +60,7 @@ def prepare_seq_cls_datasets(ds, tokenizer, max_length):
                 desc=key
             ) \
             # rename label column to match classifier naming convention
-            .rename_column('label', 'labels')
+            .rename_column(label_column, 'labels')
         # prepare each dataset in the dict
         for key, dataset in ds.items()
     }
@@ -93,6 +93,7 @@ if __name__ == '__main__':
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on the Conll2003 dataset. No active learning involved.")
     parser.add_argument("--dataset", type=str, default='ag_news', help="The text classification dataset to use. Must have features 'text' and 'label'.")
+    parser.add_argument("--label-column", type=str, default="label", help="Dataset column containing target labels.")
     parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
     parser.add_argument("--strategy", type=str, default="random", 
         choices=['random', 'least-confidence', 'prediction-entropy', 'badge', 'alps', 'egl', 'egl-fast', 'egl-sampling', 'egl-fast-sampling'], 
@@ -110,6 +111,7 @@ if __name__ == '__main__':
     parser.add_argument("--acc-threshold", type=float, default=0.98, help="Early Stopping Accuracy Threshold")
     parser.add_argument("--max-length", type=int, default=64, help="Maximum length of input sequences")
     parser.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
+    parser.add_argument("--model-cache", type=str, default="/tmp/model-cache", help="Cache to save the intermediate models at.")
     parser.add_argument("--seed", type=int, default=2022, help="Random seed")
     # parse arguments
     args = parser.parse_args()
@@ -122,7 +124,7 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
     # load and prepare dataset
     ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
-    ds = prepare_seq_cls_datasets(ds, tokenizer, args.max_length)
+    ds = prepare_seq_cls_datasets(ds, tokenizer, args.max_length, args.label_column)
     num_labels = len(ds['train'].info.features['labels'].names)
 
     # load model and create optimizer
@@ -131,7 +133,7 @@ if __name__ == '__main__':
     scheduler = LinearWithWarmup(optim, warmup_proportion=0.1)
 
     # create the trainer, validater and tester
-    trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True)
+    trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True, cache_dir=args.model_cache)
     validater = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
@@ -188,24 +190,16 @@ if __name__ == '__main__':
     # attach progress bar to strategy
     ProgressBar(desc='Strategy').attach(strategy)
 
-    # list of all strategies that can be also used as initial strategies,
-    # i.e. strategies that do necessarily depend on a finetuned model
-    valid_init_strategies = (
-        Alps,
-        EglByTopK,
-        EglBySampling,
-        EglFastBySampling
-    )
     # create active learning loop
     loop = ActiveLoop(
         pool=ds['train'],
         strategy=strategy,
         batch_size=64,
         query_size=args.query_size,
-        init_strategy=strategy if isinstance(strategy, valid_init_strategies) else Random()
+        init_strategy=strategy if isinstance(strategy, Alps) else Random()
     )
     
-    # active learning loop
+    # run active learning loop
     train_data, val_data = [], []
     for i, samples in enumerate(islice(loop, args.steps), 1):
         print("-" * 8, "AL Step %i" % i, "-" * 8)
