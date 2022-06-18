@@ -3,18 +3,18 @@
 # et al. (https://arxiv.org/pdf/2107.05687.pdf).
   
 # specify experiment name and dataset
-EXPERIMENT=costumer-reviews
-DATASET=./src/data/costumer_reviews.py
-LABEL=label
+EXPERIMENT=trec-6
+DATASET=trec
+LABEL=label-coarse
 # pretrained model to use
-PRETRAINED_CKPT=distilroberta-base
+PRETRAINED_CKPT=bert-large-uncased
 # optimization hyperparameters
 LR=2e-5
 LR_DECAY=0.975
 WEIGHT_DECAY=0.01
 BATCH_SIZE=12
 MAX_EPOCHS=15
-MAX_LENGTH=40
+MAX_LENGTH=50
 # stopping criteria
 PATIENCE=5
 ACCURACY_THRESHOLD=0.98
