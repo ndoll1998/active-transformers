@@ -176,6 +176,7 @@ class _EglBase(AbstractStrategy):
             Returns:
                 norm (torch.FloatTensor): (squared) gradient norm length computed following Goodfellow (2016)
         """
+        self.model.eval()
         # move batch to device and pass through model
         batch = move_to_device(batch, device=idist.device())
         logits = self.model(**batch).logits
@@ -326,6 +327,7 @@ class _EglFastBase(_EglBase):
             Returns:
                 norm (torch.FloatTensor): (squared) gradient norm length computed following Goodfellow (2016)
         """
+        self.model.eval()
         # move batch to device and pass through model
         batch = move_to_device(batch, device=idist.device())
         logits = self.model(**batch).logits
