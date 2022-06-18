@@ -1,21 +1,3 @@
-""" Match exact setup from the paper Revisiting Uncertainty-based Query Strategies for Active Learning with Transformers
-    by Christoph Schroeder et al. (https://arxiv.org/pdf/2107.05687.pdf).
-    
-    Experimental Setup:
-        - query size: 25
-        - active learning steps: 20
-        - validation data: 10% of so far labeled
-        - early stopping:
-            - if validation loss doesn't decrease for 5 epochs
-            - if validation accuracy surpasses 98%
-        - training epochs:
-            - 50 for ag_news
-            - 15 for all others
-        - optimizer:
-            - type: AdamW
-            - lr: 2e-5
-        - batch-size: 12
-"""
 import os
 import re
 import torch
@@ -28,8 +10,8 @@ import numpy as np
 # datasets and transformers
 import datasets
 from transformers import (
-    BertTokenizerFast, 
-    BertForSequenceClassification
+    AutoTokenizer, 
+    AutoModelForSequenceClassification
 )
 # import active learning components
 from src.active.loop import ActiveLoop
@@ -49,6 +31,7 @@ from src.active.strategies.egl import (
 # import utilities
 from src.utils.engines import Trainer, Evaluator
 from src.utils.schedulers import LinearWithWarmup
+from src.utils.params import TransformerParameterGroups
 # import ignite metrics and handlers
 from ignite.engine import Events
 from ignite.metrics.recall import Recall
@@ -116,6 +99,8 @@ if __name__ == '__main__':
         help="Active Learning Strategy to use"
     )
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
+    parser.add_argument("--lr-decay", type=float, default=1.0, help="Layer-wise learining rate decay")
+    parser.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
     parser.add_argument("--steps", type=int, default=20, help="Number of Active Learning Steps")
     parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
     parser.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
@@ -134,22 +119,15 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     # load tokenizer
-    tokenizer = BertTokenizerFast.from_pretrained(args.pretrained_ckpt)
+    tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
     # load and prepare dataset
     ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
     ds = prepare_seq_cls_datasets(ds, tokenizer, args.max_length)
     num_labels = len(ds['train'].info.features['labels'].names)
 
     # load model and create optimizer
-    model = BertForSequenceClassification.from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW([
-        # all bert encoder parameters but only apply weight decay to non-bias parameters
-        {'params': [p for n, p in model.bert.named_parameters() if 'bias' not in n], 'weight_decay': 0.01},
-        {'params': [p for n, p in model.bert.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
-        # classifier parameters use higher learning rate and weight decay similar to encoder parameters
-        {'params': [p for n, p in model.classifier.named_parameters() if 'bias' not in n], 'weight_decay': 0.01},
-        {'params': [p for n, p in model.classifier.named_parameters() if 'bias' in n], 'weight_decay': 0.0},
-    ], lr=args.lr)
+    model = AutoModelForSequenceClassification.from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
+    optim = torch.optim.AdamW(TransformerParameterGroups(model, lr=args.lr, lr_decay=args.lr_decay, weight_decay=args.weight_decay))
     scheduler = LinearWithWarmup(optim, warmup_proportion=0.1)
 
     # create the trainer, validater and tester
@@ -168,12 +146,9 @@ if __name__ == '__main__':
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
     # create wandb logger
-    logger = WandBLogger(
-        project='master-thesis',
-        name="al-seq-cls-bert",
-        config=config,
-        group="al-seq-cls"
-    )
+    # project and run name are set as environment variables
+    # (see `run.sh`)
+    logger = WandBLogger(config=config)
     # log train metrics after each train run
     logger.attach_output_handler(
         trainer,
