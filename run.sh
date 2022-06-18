@@ -25,7 +25,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
     for STRATEGY in $STRATEGIES; do
 
         # run training
-        python scripts/al_seq_cls_bert.py \
+        python scripts/al_seq_cls.py \
             --dataset $DATASET \
             --label-column $LABEL \
             --pretrained-ckpt $PRETRAINED_CKPT \
