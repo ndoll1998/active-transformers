@@ -8,7 +8,7 @@ from .utils import move_to_device
 # import transformers and others
 from transformers import PreTrainedModel
 from abc import abstractmethod
-from typing import Tuple, Sequence, Any
+from typing import Tuple, Sequence, Any, Union
 
 class GoodfellowGradientNormForLinear(object):
     """ Goodfellow Gradient Norm for single linear layer.
@@ -146,7 +146,12 @@ class _EglBase(AbstractStrategy):
         self.k = k
 
     @abstractmethod
-    def _get_hallucinated_labels(self, logits:torch.FloatTensor, k:int) -> Tuple[torch.FloatTensor, torch.LongTensor]:
+    def _get_hallucinated_labels(
+        self, 
+        logits:torch.FloatTensor,
+        mask:Union[torch.BoolTensor, None],
+        k:int
+    ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
         """ Get hallucinated labels for which to compute the loss and gradients.
         
             Args:
@@ -154,6 +159,9 @@ class _EglBase(AbstractStrategy):
                     logits of shape (n, m) where n is the number of examples 
                     and m is the number of labels. For Token Classification tasks
                     the shape is (n, s, m) where s is the sequence length.
+                mask (Union[torch.BoolTensor, None]):
+                    attention mask of shape (n, s, m). None if no attention mask
+                    is provided by the batch.
                 k (int): number of labels to generate per example
 
             Returns:
@@ -181,13 +189,15 @@ class _EglBase(AbstractStrategy):
         batch = move_to_device(batch, device=idist.device())
         logits = self.model(**batch).logits
         # get top-k predictions
-        probs, labels = self._get_hallucinated_labels(logits, k=self.k)
+        mask = batch.get('attention_mask', None)
+        probs, labels = self._get_hallucinated_labels(logits, mask, k=self.k)
         assert probs.size(0) == labels.size(0) == logits.size(0), "Mismatch between batchsizes of probs (%i), labels (%i) and logits (%i)" % (probs.size(0), labels.size(0), logits.size(0))
         assert probs.size(-1) == labels.size(-1), "Mismatch between selected labels of probs (%i) and labels (%i)" % (probs.size(-1), labels.size(-1))
+        assert probs.ndim == 2, "Expected probabilities two have two dimensions but got shape $s" % str(tuple(probs.size()))
         # compute loss and backpropagate
         for i in range(labels.size(-1)):
             F.cross_entropy(
-                logits.flatten(start_dim=1), 
+                logits.flatten(end_dim=-2), 
                 labels[..., i].flatten(), 
                 reduction='sum'
             ).backward(retain_graph=i < labels.size(-1)-1)
@@ -206,6 +216,7 @@ class _EglBase(AbstractStrategy):
                 indices (Sequence[int]): drawn examples given by their indices in `output`
         """
         # get the samples with top expected gradient length
+        print(output.size(), query_size)
         return output.topk(k=query_size).indices
 
 
@@ -223,7 +234,12 @@ class EglByTopK(_EglBase):
     """
     
     @torch.no_grad()
-    def _get_hallucinated_labels(self, logits:torch.FloatTensor, k:int) -> Tuple[torch.FloatTensor, torch.LongTensor]:
+    def _get_hallucinated_labels(
+        self, 
+        logits:torch.FloatTensor, 
+        mask:Union[torch.BoolTensor, None],
+        k:int
+    ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
         """ Get hallucinated labels for which to compute the loss and gradients.
             Selects the top-k predictions as hallucinated labels.
         
@@ -243,10 +259,17 @@ class EglByTopK(_EglBase):
                     hallucinated labels selected for loss computation. Must be of the
                     shape (n, k).
         """
-        assert logits.ndim == 2, "Expected simple sequence classification, i.e. logits of two dimensions but got logits of shape %s" % str(logits.shape)
+        # assert logits.ndim == 2, "Expected simple sequence classification, i.e. logits of two dimensions but got logits of shape %s" % str(logits.shape)
         k = min(self.k, logits.size(-1))
         probs = torch.softmax(logits, dim=-1) 
-        return torch.topk(probs, k=k, dim=-1)
+        probs, labels = torch.topk(probs, k=k, dim=-1)
+        # handle token classification
+        if logits.ndim == 3:
+            # token classification, compute probability for label sequence
+            probs = probs if mask is None else probs.masked_fill_(~mask.unsqueeze(-1), 1.0)
+            probs = torch.prod(probs, dim=1)
+        # return probabilities and labels
+        return probs, labels
 
 
 class EglBySampling(_EglBase):
