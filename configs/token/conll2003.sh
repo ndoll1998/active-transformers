@@ -6,7 +6,7 @@ EXPERIMENT=conll2003
 DATASET=conll2003
 LABEL=ner_tags
 # pretrained model to use
-PRETRAINED_CKPT=distilroberta-base
+PRETRAINED_CKPT=bert-base-uncased
 # optimization hyperparameters
 LR=2e-5
 LR_DECAY=0.975
