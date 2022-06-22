@@ -286,7 +286,12 @@ class EglBySampling(_EglBase):
     """
 
     @torch.no_grad()
-    def _get_hallucinated_labels(self, logits:torch.FloatTensor, k:int) -> Tuple[torch.FloatTensor, torch.LongTensor]:
+    def _get_hallucinated_labels(
+        self, 
+        logits:torch.FloatTensor, 
+        mask:Union[torch.BoolTensor, None],
+        k:int
+    ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
         """ Get hallucinated labels for which to compute the loss and gradients.
             Samples labels from distribution defined by logits.
         
@@ -314,6 +319,9 @@ class EglBySampling(_EglBase):
             num_samples=k,
             replacement=True
         ).reshape(*logits.size()[:-1], k)
+        # token classification, apply mask to disable loss for invalid tokens
+        if (mask is not None) and (logits.ndim == 3):
+            labels.masked_fill_(~mask.unsqueeze(-1), -100)
         # weight each label the same, weighting is done by sampling
         return torch.ones((logits.size(0), k), device=labels.device), labels
 
