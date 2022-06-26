@@ -3,7 +3,7 @@ import torch
 from torch.utils.data import ConcatDataset, DataLoader, random_split
 # import active learning loop and utils
 from src.active.loop import ActiveLoop
-from src.utils.engines import Trainer, Evaluator
+from src.active.utils.engines import Trainer, Evaluator
 # import ignite
 from ignite.engine import Events
 from ignite.metrics.recall import Recall

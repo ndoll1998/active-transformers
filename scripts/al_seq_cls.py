@@ -10,8 +10,8 @@ from transformers import (
 from src.active.loop import ActiveLoop
 from src.active.strategies import *
 # import optimization utilities
-from src.utils.schedulers import LinearWithWarmup
-from src.utils.params import TransformerParameterGroups
+from src.active.utils.schedulers import LinearWithWarmup
+from src.active.utils.params import TransformerParameterGroups
 # import ignite progress bar and script utils
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from scripts.utils import build_argument_parser, run_active_learning

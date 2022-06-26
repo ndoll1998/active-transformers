@@ -10,8 +10,8 @@ from transformers import (
 from src.active.loop import ActiveLoop
 from src.active.strategies import *
 # import optimization utilities
-from src.utils.schedulers import LinearWithWarmup
-from src.utils.params import TransformerParameterGroups
+from src.active.utils.schedulers import LinearWithWarmup
+from src.active.utils.params import TransformerParameterGroups
 # import data processor
 from src.data.processors import Conll2003Processor
 # import ignite progress bar and script utils
@@ -52,7 +52,7 @@ def build_strategy(args, model):
     elif args.strategy == 'badge': return BadgeForTokenClassification(model.bert, model.classifier)
     elif args.strategy == 'alps': return Alps(model, mlm_prob=0.15)
     elif args.strategy == 'egl': return EglByTopK(model, k=1)
-    elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
+    elif args.strategy == 'egl-sampling': return EglBySampling(model, k=8)
 
 if __name__ == '__main__':
     
