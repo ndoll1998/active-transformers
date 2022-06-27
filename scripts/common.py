@@ -11,8 +11,12 @@ from ignite.metrics.precision import Precision
 from ignite.metrics import Average, Fbeta, Accuracy
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from ignite.contrib.handlers.wandb_logger import WandBLogger
+# dimensionality reduction
+from sklearn.manifold import TSNE
 # others
+import wandb
 from itertools import islice
+from matplotlib import pyplot as plt
 from argparse import ArgumentParser
 
 def build_argument_parser() -> ArgumentParser:
@@ -102,6 +106,36 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     train_data, val_data = [], []
     for i, samples in enumerate(islice(loop, args.steps), 1):
         print("-" * 8, "AL Step %i" % i, "-" * 8)
+
+        # try to visualize the representation used by the strategy
+        if loop.strategy.output is not None:
+            # get indices of sampled instances in current pool
+            global_idx = torch.LongTensor(samples.indices + loop.pool.indices)
+            inv_global_idx = torch.argsort(global_idx)
+            idx = torch.empty_like(global_idx)
+            idx.scatter_(0, inv_global_idx, torch.arange(global_idx.size(0)))
+            idx = idx[:len(samples)]
+            # get strategy output
+            output = loop.strategy.output
+            output = output if output.ndim == 2 else \
+                output.reshape(-1, 1) if output.ndim == 1 else \
+                output.flatten(start_dim=1)
+            # reduce dimension for visualization using t-sne    
+            X = TSNE(
+                n_components=2,
+                perplexity=50,
+                learning_rate='auto',
+                init='random'
+            ).fit_transform(
+                X=output
+            )
+            # plot
+            fig, ax = plt.subplots()
+            ax.scatter(X[:, 0], X[:, 1], s=1.0, color="blue", alpha=0.1)
+            ax.scatter(X[idx, 0], X[idx, 1], s=2.0, color='red', alpha=1.0)
+            ax.set(title="Pool embedding iteration %i (t-SNE)" % i)
+            # save figure
+            wandb.log({"Embedding": wandb.Image(fig)})
 
         # split into train and validation samples
         train_samples, val_samples = random_split(

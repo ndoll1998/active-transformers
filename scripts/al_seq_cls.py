@@ -14,7 +14,7 @@ from src.active.utils.schedulers import LinearWithWarmup
 from src.active.utils.params import TransformerParameterGroups
 # import ignite progress bar and script utils
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
-from scripts.utils import build_argument_parser, run_active_learning
+from scripts.common import build_argument_parser, run_active_learning
 
 def prepare_seq_cls_datasets(ds, tokenizer, max_length, label_column):
     # prepare datasets
@@ -52,6 +52,7 @@ def build_strategy(args, model):
     elif args.strategy == 'prediction-entropy': return PredictionEntropy(model)
     elif args.strategy == 'badge': return BadgeForSequenceClassification(model.bert, model.classifier)
     elif args.strategy == 'alps': return Alps(model, mlm_prob=0.15)
+    elif args.strategy == 'alps-unnormalized': return Alps(model, mlm_prob=0.15, normalize=False)
     elif args.strategy == 'egl': return EglByTopK(model, k=3)
     elif args.strategy == 'egl-fast': return EglFastByTopK(model, k=3)
     elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
@@ -87,7 +88,7 @@ if __name__ == '__main__':
     loop = ActiveLoop(
         pool=ds['train'],
         strategy=strategy,
-        batch_size=64,
+        batch_size=16,
         query_size=args.query_size,
         init_strategy=strategy if isinstance(strategy, Alps) else Random()
     )

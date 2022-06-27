@@ -32,6 +32,20 @@ class AbstractStrategy(Engine, ABC):
         )
         self.output_store.attach(self)
 
+    @property
+    def output(self) -> Any:
+        """ Output of the strategy engine. Returns output corresponding to the
+            (unlabeled) data points of the pool last processed by the strategy.
+            Depending on the type of strategy this corresponds to a tpye of
+            representation (i.e. uncertainty scores, gradient embedding, etc.).
+            Returns `None` before the first exection of the strategy.
+        """
+        # empty data store, i.e. strategy not executed yet
+        if len(self.output_store.data) == 0:
+            return None
+        # get the recorded outputs and concatenate them
+        return concat_tensors(self.output_store.data)
+
     @abstractmethod
     def process(self, batch:Any) -> Any:
         """ Process a given batch. Outputs of this function will 
@@ -84,11 +98,8 @@ class AbstractStrategy(Engine, ABC):
         # reset output store and run the engine
         self.output_store.reset()
         self.run(loader)
-        # get the recorded outputs
-        output = self.output_store.data
-        output = concat_tensors(output)
         # sample indices and check the number of indices
-        indices = self.sample(output, query_size)
+        indices = self.sample(self.output, query_size)
         assert len(indices) == min(query_size, len(pool))
         # return the sampled indices
         return indices

@@ -16,7 +16,7 @@ from src.active.utils.params import TransformerParameterGroups
 from src.data.processors import Conll2003Processor
 # import ignite progress bar and script utils
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
-from scripts.utils import build_argument_parser, run_active_learning
+from scripts.common import build_argument_parser, run_active_learning
 
 def prepare_token_cls_datasets(ds, tokenizer, max_length, label_column):
     # build processor
@@ -70,7 +70,7 @@ if __name__ == '__main__':
     ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
     ds = prepare_token_cls_datasets(ds, tokenizer, args.max_length, args.label_column)
     num_labels = ds['train'].info.features[args.label_column].feature.num_classes
-    
+
     # load model and create optimizer
     model = AutoModelForTokenClassification.from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
     optim = torch.optim.AdamW(TransformerParameterGroups(model, lr=args.lr, lr_decay=args.lr_decay, weight_decay=args.weight_decay))
