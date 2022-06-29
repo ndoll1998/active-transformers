@@ -27,17 +27,23 @@ class Alps(AbstractStrategy):
                 masked-lanugage modeling probability used to generate 
                 targets for loss that builds the surprisal embeddings
                 Defaults to 15%.
+            normalize (bool):
+                whether to normalize the loss vectors. If set to `True`
+                the mlm-loss will be normalized to unit length. Defaults
+                to `True`.
     """
 
     def __init__(
         self,
         model:PreTrainedModel,
-        mlm_prob:float =0.15
+        mlm_prob:float =0.15,
+        normalize:bool =True
     ) -> None:
         # initialize strategy
         super(Alps, self).__init__()
         # save values
         self.mlm_prob = mlm_prob
+        self.normalize = normalize
         # get pretrained name
         pretrained_name_or_path = model.config.name_or_path
         assert pretrained_name_or_path is not None, "Expected pretrained model"
@@ -56,6 +62,8 @@ class Alps(AbstractStrategy):
             Returns:
                 embed (torch.Tensor): surprisal embedding of samples in batch
         """
+        # set model to evaluation mode
+        self.model.eval()
         # move batch to device and get input ids
         batch = move_to_device(batch, device=idist.device())
         input_ids = batch['input_ids']
@@ -78,8 +86,8 @@ class Alps(AbstractStrategy):
             labels.flatten(),
             reduction='none'
         ).reshape(labels.size())
-        # l2-normalization
-        return F.normalize(loss, dim=-1)
+        # l2-normalization if asked for
+        return F.normalize(loss, dim=-1) if self.normalize else loss
 
     def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
         """ Select samples using kmeans clustering on surprisal embeddings 

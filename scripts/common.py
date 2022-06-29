@@ -101,7 +101,7 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         metric_names='all',
         global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
     )
-     
+    
     # run active learning loop
     train_data, val_data = [], []
     for i, samples in enumerate(islice(loop, args.steps), 1):
@@ -109,13 +109,8 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
 
         # try to visualize the representation used by the strategy
         if loop.strategy.output is not None:
-            # get indices of sampled instances in current pool
-            global_idx = torch.LongTensor(samples.indices + loop.pool.indices)
-            inv_global_idx = torch.argsort(global_idx)
-            idx = torch.empty_like(global_idx)
-            idx.scatter_(0, inv_global_idx, torch.arange(global_idx.size(0)))
-            idx = idx[:len(samples)]
-            # get strategy output
+            # get selected indices and processing output of unlabeled pool
+            idx = loop.strategy.selected_indices
             output = loop.strategy.output
             output = output if output.ndim == 2 else \
                 output.reshape(-1, 1) if output.ndim == 1 else \
@@ -133,7 +128,8 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
             fig, ax = plt.subplots()
             ax.scatter(X[:, 0], X[:, 1], s=1.0, color="blue", alpha=0.1)
             ax.scatter(X[idx, 0], X[idx, 1], s=2.0, color='red', alpha=1.0)
-            ax.set(title="Pool embedding iteration %i (t-SNE)" % i)
+            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, i))
+            ax.legend(['pool', 'query'])
             # save figure
             wandb.log({"Embedding": wandb.Image(fig)})
 

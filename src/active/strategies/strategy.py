@@ -28,9 +28,11 @@ class AbstractStrategy(Engine, ABC):
         # add output storage handler to self
         self.output_store = EpochOutputStore(
             # detach from gradient and move to cpu for storing
-            output_transform=partial(map_tensors, fn=lambda t: t.detach().to('cpu'))
+            output_transform=partial(map_tensors, fn=lambda t: t.detach().cpu())
         )
         self.output_store.attach(self)
+        # last selected indices
+        self._indices:Sequence[int] = None
 
     @property
     def output(self) -> Any:
@@ -45,6 +47,14 @@ class AbstractStrategy(Engine, ABC):
             return None
         # get the recorded outputs and concatenate them
         return concat_tensors(self.output_store.data)
+
+    @property
+    def selected_indices(self) -> Sequence[int]:
+        """ List of indices last selected by the strategy. Indices reference items
+            in the unlabeled data pool last processed by the strategy. Returns
+            `None` before the first execution. 
+        """
+        return self._indices
 
     @abstractmethod
     def process(self, batch:Any) -> Any:
@@ -99,7 +109,7 @@ class AbstractStrategy(Engine, ABC):
         self.output_store.reset()
         self.run(loader)
         # sample indices and check the number of indices
-        indices = self.sample(self.output, query_size)
-        assert len(indices) == min(query_size, len(pool))
+        self._indices = list(self.sample(self.output, query_size))
+        assert len(self._indices) == min(query_size, len(pool))
         # return the sampled indices
-        return indices
+        return self._indices
