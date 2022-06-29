@@ -216,7 +216,6 @@ class _EglBase(AbstractStrategy):
                 indices (Sequence[int]): drawn examples given by their indices in `output`
         """
         # get the samples with top expected gradient length
-        print(output.size(), query_size)
         return output.topk(k=query_size).indices
 
 
