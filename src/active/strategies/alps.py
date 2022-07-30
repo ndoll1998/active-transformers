@@ -37,13 +37,12 @@ class Alps(AbstractStrategy):
         self,
         model:PreTrainedModel,
         mlm_prob:float =0.15,
-        normalize:bool =True
     ) -> None:
         # initialize strategy
         super(Alps, self).__init__()
-        # save values
+        # check and save value
+        assert 0 < mlm_prob <= 1, "Mask Probability must be in the interval (0, 1]"
         self.mlm_prob = mlm_prob
-        self.normalize = normalize
         # get pretrained name
         pretrained_name_or_path = model.config.name_or_path
         assert pretrained_name_or_path is not None, "Expected pretrained model"
@@ -71,9 +70,19 @@ class Alps(AbstractStrategy):
         # build label mask, i.e. find all candidate tokens for masking
         mask = input_ids.unsqueeze(-1) == self.special_token_ids.to(idist.device())
         mask = torch.any(mask, dim=-1)
+        # check mask
+        assert torch.any(mask, dim=-1).all(), "Invalid sequence of only special tokens found!"
         # compute probability of each token being masked
         mask_probs = (1.0 - mask.float()) * self.mlm_prob
         label_mask = torch.bernoulli(mask_probs).bool()
+        non_zero_mask = torch.any(label_mask, dim=-1)
+        # sample until all elements of the batch are valid,
+        # i.e. there are masked elements in each
+        while not non_zero_mask.all():
+            mask_probs[non_zero_mask, :] = 0
+            label_mask |= torch.bernoulli(mask_probs).bool()
+            non_zero_mask = torch.any(label_mask, dim=-1)
+
         # build labels from mask
         labels = input_ids.masked_fill(~label_mask, -100)
 
@@ -86,8 +95,9 @@ class Alps(AbstractStrategy):
             labels.flatten(),
             reduction='none'
         ).reshape(labels.size())
-        # l2-normalization if asked for
-        return F.normalize(loss, dim=-1) if self.normalize else loss
+        # make sure to avoid zero-embeddings
+        assert torch.any(loss >  0.0, dim=-1).all(), "Found zero embedding vector!"
+        return F.normalize(loss, dim=-1)
 
     def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
         """ Select samples using kmeans clustering on surprisal embeddings 
