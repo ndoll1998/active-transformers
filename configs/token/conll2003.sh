@@ -1,7 +1,7 @@
 # experiment setup for english Conll2003 Dataset
 
 source configs/token/defaults.sh
-SCRIPT=scripts/al_token_cls.tmp.py
+SCRIPT=scripts/al_token_cls.py
 # specify experiment name and dataset
 EXPERIMENT=conll2003
 DATASET=conll2003
