@@ -24,15 +24,7 @@ class ActiveLoop(object):
         self.strategy = strategy
         self.init_strategy = init_strategy
 
-    def apply_strategy(self, strategy:AbstractStrategy) -> Subset:
-        """ """
-        # select samples using strategy
-        indices = strategy.query(
-            pool=self.pool,
-            query_size=self.query_size,
-            batch_size=self.batch_size
-        )
-        indices = [self.pool.indices[i] for i in indices]
+    def update(self, indices:Sequence[int]) -> Subset:
         # get the data points and remove them from the pool
         data = Subset(
             dataset=self.pool.dataset,
@@ -44,6 +36,16 @@ class ActiveLoop(object):
         ))
         # return data
         return data
+
+    def apply_strategy(self, strategy:AbstractStrategy) -> Subset:
+        """ """
+        # select samples using strategy
+        indices = strategy.query(
+            pool=self.pool,
+            query_size=self.query_size,
+            batch_size=self.batch_size
+        )
+        return self.update([self.pool.indices[i] for i in indices])
 
     def init_step(self) -> Subset:
         return self.apply_strategy(self.init_strategy)
