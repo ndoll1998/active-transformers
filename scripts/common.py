@@ -36,6 +36,7 @@ def build_argument_parser() -> ArgumentParser:
     parser.add_argument("--query-size", type=int, default=25, help="Number of data points to query from pool at each AL step")
     parser.add_argument("--patience", type=int, default=5, help="Early Stopping Patience")
     parser.add_argument("--acc-threshold", type=float, default=0.98, help="Early Stopping Accuracy Threshold")
+    parser.add_argument('--min-length', type=int, default=0, help="Minimum sequence length an example must fulfill. Samples with less tokens will be filtered from the dataset.")
     parser.add_argument("--max-length", type=int, default=64, help="Maximum length of input sequences")
     parser.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
     parser.add_argument("--model-cache", type=str, default="/tmp/model-cache", help="Cache to save the intermediate models at.")

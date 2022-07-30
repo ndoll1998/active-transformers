@@ -14,6 +14,7 @@ LR_DECAY=1.0
 WEIGHT_DECAY=0.01
 BATCH_SIZE=12
 MAX_EPOCHS=15
+MIN_LENGTH=0 # not used but needed to match signature
 MAX_LENGTH=64
 # stopping criteria
 PATIENCE=5

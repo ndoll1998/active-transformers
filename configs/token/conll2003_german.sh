@@ -1,13 +1,12 @@
-# Default arguments for sequence classification tasks
+# experiment setup for english Conll2003 Dataset
 
-# script for sequence classification
-SCRIPT=scripts/al_token_cls.py
+source configs/token/defaults.sh
 # specify experiment name and dataset
-EXPERIMENT=default
-DATASET=;
-LABEL=label
+EXPERIMENT=conll2003-german
+DATASET=src/data/conll2003.py
+LABEL=ner_tags
 # pretrained model to use
-PRETRAINED_CKPT=bert-base-uncased
+PRETRAINED_CKPT=bert-base-german-cased
 # optimization hyperparameters
 LR=2e-5
 LR_DECAY=1.0
@@ -20,5 +19,5 @@ MAX_LENGTH=64
 PATIENCE=5
 ACCURACY_THRESHOLD=0.98
 # active learning hyperparameters
-AL_STEPS=20
-QUERY_SIZE=25
+AL_STEPS=10
+QUERY_SIZE=100

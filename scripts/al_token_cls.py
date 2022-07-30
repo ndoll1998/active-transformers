@@ -13,12 +13,12 @@ from src.active.strategies import *
 from src.active.utils.schedulers import LinearWithWarmup
 from src.active.utils.params import TransformerParameterGroups
 # import data processor
-from src.data.processors import Conll2003Processor
+from src.data.processors import SequenceTaggingProcessor
 # import ignite progress bar and script utils
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from scripts.common import build_argument_parser, run_active_learning
 
-def prepare_token_cls_datasets(ds, tokenizer, max_length, label_column):
+def prepare_token_cls_datasets(ds, tokenizer, min_length, max_length, label_column):
 
     # build processor
     processor = Conll2003Processor(
@@ -29,11 +29,16 @@ def prepare_token_cls_datasets(ds, tokenizer, max_length, label_column):
     )
     # prepare datasets
     ds = {
-        key: dataset.map(
-            processor,
-            batched=False,
-            desc=key
-        )
+        key: dataset \
+            .filter(
+                lambda ex: len(ex['tokens']) > min_length,
+                desc="Filtering"
+            )
+            .map(
+                processor,
+                batched=False,
+                desc=key
+            )
         # prepare each dataset in the dict
         for key, dataset in ds.items()
     }
@@ -70,7 +75,7 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt, add_prefix_space=True)
     # load and prepare dataset
     ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
-    ds = prepare_token_cls_datasets(ds, tokenizer, args.max_length, args.label_column)
+    ds = prepare_token_cls_datasets(ds, tokenizer, args.min_length, args.max_length, args.label_column)
     num_labels = ds['train'].info.features[args.label_column].feature.num_classes
 
     # load model and create optimizer
