@@ -19,6 +19,7 @@ from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from scripts.common import build_argument_parser, run_active_learning
 
 def prepare_token_cls_datasets(ds, tokenizer, max_length, label_column):
+
     # build processor
     processor = Conll2003Processor(
         tokenizer=tokenizer,
@@ -53,6 +54,7 @@ def build_strategy(args, model):
     elif args.strategy == 'alps': return Alps(model, mlm_prob=0.15)
     elif args.strategy == 'egl': return EglByTopK(model, k=1)
     elif args.strategy == 'egl-sampling': return EglBySampling(model, k=8)
+    elif args.strategy == 'entropy-over-max': return EntropyOverMax(model, ignore_labels=[0])
 
 if __name__ == '__main__':
     
@@ -78,7 +80,7 @@ if __name__ == '__main__':
 
     # create strategy and attach progress bar to strategy
     strategy = build_strategy(args, model)
-    ProgressBar(desc='Strategy').attach(strategy)
+    ProgressBar(ascii=True, desc='Strategy').attach(strategy)
     
     # create active learning loop
     loop = ActiveLoop(

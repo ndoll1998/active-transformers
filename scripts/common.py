@@ -67,9 +67,9 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     attach_metrics(tester)
     attach_metrics(validater)
     # attach progress bar
-    ProgressBar().attach(trainer, output_transform=lambda output: {'L': output['loss']})
-    ProgressBar(desc='Validating').attach(validater)
-    ProgressBar(desc='Testing').attach(tester)
+    ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
+    ProgressBar(ascii=True, desc='Validating').attach(validater)
+    ProgressBar(ascii=True, desc='Testing').attach(tester)
     
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
