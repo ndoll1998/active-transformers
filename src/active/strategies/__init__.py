@@ -1,7 +1,8 @@
 from .random import Random
 from .uncertainty import (
     LeastConfidence,
-    PredictionEntropy
+    PredictionEntropy,
+    EntropyOverMax
 )
 from .badge import (
     Badge,
