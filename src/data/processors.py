@@ -2,7 +2,7 @@ import datasets
 from transformers import PreTrainedTokenizer
 from itertools import chain
 
-class Conll2003Processor(object):
+class SequenceTaggingProcessor(object):
 
     def __init__(
         self,
@@ -26,9 +26,16 @@ class Conll2003Processor(object):
     def begin2in(self):
         # get bio labels and extract classes from it
         bio = self.dataset_info.features[self.tags_field].feature
-        classes = set([label[2:] for label in bio.names if len(label) > 2])
-        # map begin label-id to in label-id per class
-        return {bio.str2int("B-%s" % c): bio.str2int("I-%s" % c) for c in classes}
+        
+        # check label scheme
+        if all(label[:2] in ["O", "O-", "B-", "I-"] for label in bio.names):
+            # begin-in marked by 'B-' and 'I-'
+            classes = set([label[2:] for label in bio.names if len(label) > 2])
+            # map begin label-id to in label-id per class
+            return {bio.str2int("B-%s" % c): bio.str2int("I-%s" % c) for c in classes}
+        
+        # fallback use identity
+        return {i: i for i, _ in enumerate(bio.names)}
 
     def __call__(self, item:dict) -> dict:
 
