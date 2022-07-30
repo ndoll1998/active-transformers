@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 # import gradient norm class
 from src.active.strategies.egl import GoodfellowGradientNorm
 
