@@ -1,14 +1,14 @@
 # import torch
 import torch
-from torch.utils.data import ConcatDataset, DataLoader, random_split
+from torch.utils.data import DataLoader
 # import active learning loop and utils
 from src.active.loop import ActiveLoop
+from src.active.engine import ConvergenceRetryEvents, ActiveLearningEngine
+from src.active.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from src.active.utils.engines import Trainer, Evaluator
 # import ignite
 from ignite.engine import Events
-from ignite.metrics.recall import Recall
-from ignite.metrics.precision import Precision
-from ignite.metrics import Average, Fbeta, Accuracy
+from ignite.metrics import Recall, Precision, Average,Fbeta, Accuracy, ConfusionMatrix
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from ignite.contrib.handlers.wandb_logger import WandBLogger
 # dimensionality reduction
@@ -58,20 +58,107 @@ def attach_metrics(engine):
     P.attach(engine, 'P')
     F.attach(engine, 'F')
 
+def visualize_embeds(strategy):
+    # get selected indices and processing output of unlabeled pool
+    idx = strategy.selected_indices
+    output = strategy.output
+    output = output if output.ndim == 2 else \
+        output.reshape(-1, 1) if output.ndim == 1 else \
+        output.flatten(start_dim=1)
+    # reduce dimension for visualization using t-sne    
+    X = TSNE(
+        n_components=2,
+        perplexity=50,
+        learning_rate='auto',
+        init='random'
+    ).fit_transform(
+        X=output
+    )
+    # plot
+    fig, ax = plt.subplots()
+    ax.scatter(X[:, 0], X[:, 1], s=1.0, color="blue", alpha=0.1)
+    ax.scatter(X[idx, 0], X[idx, 1], s=2.0, color='red', alpha=1.0)
+    ax.legend(['pool', 'query'])
+    # return axes and figure
+    return ax, fig
+
 def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
+    
     # create the trainer, validater and tester
     trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True, cache_dir=args.model_cache)
-    validater = Evaluator(model)
+    validator = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
     attach_metrics(trainer)
+    attach_metrics(validator)
     attach_metrics(tester)
-    attach_metrics(validater)
     # attach progress bar
     ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
-    ProgressBar(ascii=True, desc='Validating').attach(validater)
+    ProgressBar(ascii=True, desc='Validating').attach(validator)
     ProgressBar(ascii=True, desc='Testing').attach(tester)
+    # attach confusion matrix metric to tester
+    # needed for some active learning metrics
+    ConfusionMatrix(
+        num_classes=model.config.num_labels,
+        output_transform=tester.get_logits_and_labels
+    ).attach(tester, "cm")
     
+    # create active learning engine
+    al_engine = ActiveLearningEngine(
+        trainer=trainer,
+        trainer_run_kwargs=dict(
+            max_epochs=args.epochs,
+            epoch_length=args.epoch_length
+        ),
+        train_batch_size=args.batch_size,
+        eval_batch_size=64,
+        max_convergence_retries=3,
+        train_val_ratio=0.9
+    )
+    
+    @al_engine.on(Events.ITERATION_STARTED)
+    def on_started(engine):
+        i = engine.state.iteration
+        print("-" * 8, "AL Step %i" % i, "-" * 8)
+
+    @al_engine.on(ConvergenceRetryEvents.CONVERGED | ConvergenceRetryEvents.CONVERGENCE_RETRY_COMPLETED)
+    def on_converged(engine):
+        print("Training Converged:", engine.trainer.converged)
+        print("Final Train Accuracy:", engine.trainer.train_accuracy)
+
+    @al_engine.on(Events.ITERATION_COMPLETED)
+    def visualize(engine):
+        # check if there is an output to visualize
+        if loop.strategy.output is not None:
+            ax, fig = visualize_embeds(loop.strategy)
+            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
+            wandb.log({"Embedding": wandb.Image(fig)}) 
+
+    @al_engine.on(Events.ITERATION_COMPLETED)
+    def validate_and_test(engine):
+        # create validation and test dataloaders
+        val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
+        test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
+        # run on validation data
+        state = validator.run(val_loader)
+        print("Validation Metrics:", state.metrics)
+
+        # run on test data
+        tester.run(test_loader)
+        print("Test Metrics:", state.metrics)
+    
+    # add metrics to active learning engine
+    WorkSavedOverSampling(
+        output_transform=lambda _: tester.state.metrics['cm']
+    ).attach(al_engine, "WSS")
+
+    AreaUnderLearningCurve(
+        output_transform=lambda _: (
+            al_engine.state.iteration,
+            tester.state.metrics['A']
+        )
+    ).attach(al_engine, "Area(Accuracy)")
+
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
     # create wandb logger, project and run name are set
@@ -84,89 +171,27 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         tag="train",
         metric_names='all',
         output_transform=lambda *_: {'steps': trainer.state.iteration},
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
+        global_step_transform=lambda *_: len(al_engine.train_dataset)
     )
     # log validation metrics
     logger.attach_output_handler(
-        validater,
+        validator,
         event_name=Events.COMPLETED,
         tag="val",
         metric_names='all',
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
+        global_step_transform=lambda *_: len(al_engine.train_dataset)
     )
     # log test metrics
     logger.attach_output_handler(
         tester,
         event_name=Events.COMPLETED,
         tag="test",
-        metric_names='all',
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
+        metric_names=['L', 'A', 'R', 'P', 'F'], # avoid logging confusion matrix
+        global_step_transform=lambda *_: len(al_engine.train_dataset)
     )
-    
-    # run active learning loop
-    train_data, val_data = [], []
-    for i, samples in enumerate(islice(loop, args.steps), 1):
-        print("-" * 8, "AL Step %i" % i, "-" * 8)
 
-        # try to visualize the representation used by the strategy
-        if loop.strategy.output is not None:
-            # get selected indices and processing output of unlabeled pool
-            idx = loop.strategy.selected_indices
-            output = loop.strategy.output
-            output = output if output.ndim == 2 else \
-                output.reshape(-1, 1) if output.ndim == 1 else \
-                output.flatten(start_dim=1)
-            # reduce dimension for visualization using t-sne    
-            X = TSNE(
-                n_components=2,
-                perplexity=50,
-                learning_rate='auto',
-                init='random'
-            ).fit_transform(
-                X=output
-            )
-            # plot
-            fig, ax = plt.subplots()
-            ax.scatter(X[:, 0], X[:, 1], s=1.0, color="blue", alpha=0.1)
-            ax.scatter(X[idx, 0], X[idx, 1], s=2.0, color='red', alpha=1.0)
-            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, i))
-            ax.legend(['pool', 'query'])
-            # save figure
-            wandb.log({"Embedding": wandb.Image(fig)})
-
-        # split into train and validation samples
-        train_samples, val_samples = random_split(
-            samples, [
-                int(len(samples) * 0.9),
-                len(samples) - int(len(samples) * 0.9)
-            ]
-        )
-        # create datasets
-        train_data.append(train_samples)
-        val_data.append(val_samples)
-
-        # create dataloaders
-        train_loader = DataLoader(ConcatDataset(train_data), batch_size=args.batch_size, shuffle=True)
-        val_loader = DataLoader(ConcatDataset(val_data), batch_size=64, shuffle=False)
-        test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
-        # udpate validation loader
-        trainer.val_loader = val_loader
-
-        # try to train to convergence at most three times
-        for _ in range(3):
-            # train model
-            state = trainer.run(train_loader, max_epochs=args.epochs, epoch_length=args.epoch_length)
-            print("Training Converged:", trainer.converged)
-            print("Train Metrics:", state.metrics)
-            print("Final Train Accuracy:", trainer.train_accuracy)
-            # check for convergence
-            if trainer.converged:
-                break
-
-        # validate model
-        state = validater.run(val_loader)
-        print("Validation Metrics:", state.metrics)
-
-        # test model
-        state = tester.run(test_loader)
-        print("Test Metrics:", state.metrics)
+    # run active learning experiment
+    state = al_engine.run(loop, steps=args.steps)
+    print("Active Learning Metrics:", state.metrics)
+    # log active learning metric scores
+    wandb.run.summary.update(state.metrics)

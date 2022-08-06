@@ -21,7 +21,7 @@ from scripts.common import build_argument_parser, run_active_learning
 def prepare_token_cls_datasets(ds, tokenizer, min_length, max_length, label_column):
 
     # build processor
-    processor = Conll2003Processor(
+    processor = SequenceTaggingProcessor(
         tokenizer=tokenizer,
         dataset_info=next(iter(ds.values())).info,
         tags_field=label_column,
