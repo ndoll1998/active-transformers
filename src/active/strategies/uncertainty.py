@@ -50,7 +50,7 @@ class UncertaintyStrategy(AbstractStrategy):
         probs = torch.softmax(logits, dim=-1)
         # compute uncertainty scores
         scores = self.uncertainty_measure(probs)
-        assert scores.size() == logits.size()[:2]        
+        assert scores.size() == logits.size()[:scores.ndim]        
 
         # ignore labels
         _, labels = logits.max(dim=-1)
