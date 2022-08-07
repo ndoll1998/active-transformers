@@ -15,7 +15,7 @@ from sklearn.neighbors import NearestNeighbors
 # import base class and more
 from .strategy import AbstractStrategy
 from .utils import move_to_device
-from typing import Sequence, Any
+from typing import Sequence, Any, Optional
 
 class Alps(AbstractStrategy):
     """ Implementation of ALPS presented in `Cold-Start Active Learning through 
@@ -23,26 +23,30 @@ class Alps(AbstractStrategy):
     
         Args:
             model (PreTrainedModel): pretrained transformer model
-            mlm_prob (float): 
+            mlm_prob (Optional[float]): 
                 masked-lanugage modeling probability used to generate 
                 targets for loss that builds the surprisal embeddings
                 Defaults to 15%.
-            normalize (bool):
-                whether to normalize the loss vectors. If set to `True`
-                the mlm-loss will be normalized to unit length. Defaults
-                to `True`.
+            force_non_zero (Optional[bool]):
+                wether to enforce non-zero surprisal embedding vectors.
+                Surprisal embeddings are computed from the MLM pretraining,
+                i.e. compute a loss for randomly sampled tokens. It might occur
+                that no tokens are selected for a full instance (especially for
+                short sequences), which leads to zero embeddings. Defaults to False.
     """
 
     def __init__(
         self,
         model:PreTrainedModel,
-        mlm_prob:float =0.15,
+        mlm_prob:Optional[float] =0.15,
+        force_non_zero:Optional[bool] =False
     ) -> None:
         # initialize strategy
         super(Alps, self).__init__()
         # check and save value
         assert 0 < mlm_prob <= 1, "Mask Probability must be in the interval (0, 1]"
         self.mlm_prob = mlm_prob
+        self.force_non_zero = force_non_zero
         # get pretrained name
         pretrained_name_or_path = model.config.name_or_path
         assert pretrained_name_or_path is not None, "Expected pretrained model"
@@ -78,7 +82,7 @@ class Alps(AbstractStrategy):
         non_zero_mask = torch.any(label_mask, dim=-1)
         # sample until all elements of the batch are valid,
         # i.e. there are masked elements in each
-        while not non_zero_mask.all():
+        while self.force_non_zero and (not non_zero_mask.all()):
             mask_probs[non_zero_mask, :] = 0
             label_mask |= torch.bernoulli(mask_probs).bool()
             non_zero_mask = torch.any(label_mask, dim=-1)
@@ -96,7 +100,9 @@ class Alps(AbstractStrategy):
             reduction='none'
         ).reshape(labels.size())
         # make sure to avoid zero-embeddings
-        assert torch.any(loss >  0.0, dim=-1).all(), "Found zero embedding vector!"
+        if self.force_non_zero:
+            assert torch.any(loss > 0.0, dim=-1).all(), "Found zero embedding vector!"
+        # return normalized embeddings
         return F.normalize(loss, dim=-1)
 
     def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
