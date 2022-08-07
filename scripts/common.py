@@ -148,16 +148,17 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         print("Test Metrics:", state.metrics)
     
     # add metrics to active learning engine
-    WorkSavedOverSampling(
-        output_transform=lambda _: tester.state.metrics['cm']
-    ).attach(al_engine, "WSS")
-
-    AreaUnderLearningCurve(
+    wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
+    area = AreaUnderLearningCurve(
         output_transform=lambda _: (
+            # point of learning curve given
+            # by iteration and accuracy value
             al_engine.state.iteration,
             tester.state.metrics['A']
         )
-    ).attach(al_engine, "Area(Accuracy)")
+    )
+    wss.attach(al_engine, "test/wss")
+    area.attach(al_engine, "test/Area(Accuracy)")
 
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
@@ -171,7 +172,7 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         tag="train",
         metric_names='all',
         output_transform=lambda *_: {'steps': trainer.state.iteration},
-        global_step_transform=lambda *_: len(al_engine.train_dataset)
+        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
     )
     # log validation metrics
     logger.attach_output_handler(
@@ -179,7 +180,7 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         event_name=Events.COMPLETED,
         tag="val",
         metric_names='all',
-        global_step_transform=lambda *_: len(al_engine.train_dataset)
+        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
     )
     # log test metrics
     logger.attach_output_handler(
@@ -187,7 +188,7 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         event_name=Events.COMPLETED,
         tag="test",
         metric_names=['L', 'A', 'R', 'P', 'F'], # avoid logging confusion matrix
-        global_step_transform=lambda *_: len(al_engine.train_dataset)
+        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
     )
 
     # run active learning experiment
@@ -195,3 +196,6 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     print("Active Learning Metrics:", state.metrics)
     # log active learning metric scores
     wandb.run.summary.update(state.metrics)
+
+    # run finished
+    logger.close()
