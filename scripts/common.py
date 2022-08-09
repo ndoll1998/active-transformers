@@ -44,7 +44,7 @@ def build_argument_parser() -> ArgumentParser:
     # return parser
     return parser
 
-def attach_metrics(engine):
+def attach_metrics(engine, tag):
     # create metrics
     L = Average(output_transform=type(engine).get_loss)
     A = Accuracy(output_transform=type(engine).get_logits_and_labels)
@@ -52,11 +52,11 @@ def attach_metrics(engine):
     P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
     F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
     # attach metrics
-    L.attach(engine, 'L')
-    A.attach(engine, 'A')
-    R.attach(engine, 'R')
-    P.attach(engine, 'P')
-    F.attach(engine, 'F')
+    L.attach(engine, '%s/L' % tag)
+    A.attach(engine, '%s/A' % tag)
+    R.attach(engine, '%s/R' % tag)
+    P.attach(engine, '%s/P' % tag)
+    F.attach(engine, '%s/F' % tag)
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool
@@ -84,14 +84,20 @@ def visualize_embeds(strategy):
 
 def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     
+    config = vars(args)
+    config['dataset'] = ds['train'].info.builder_name
+    # initialize wandb, project and run name are set
+    # as environment variables (see `run.sh`)
+    wandb.init(config=config)
+    
     # create the trainer, validater and tester
     trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True, cache_dir=args.model_cache)
     validator = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
-    attach_metrics(trainer)
-    attach_metrics(validator)
-    attach_metrics(tester)
+    attach_metrics(trainer, tag="train")
+    attach_metrics(validator, tag="val")
+    attach_metrics(tester, tag="test")
     # attach progress bar
     ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
     ProgressBar(ascii=True, desc='Validating').attach(validator)
@@ -127,25 +133,32 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
         print("Final Train Accuracy:", engine.trainer.train_accuracy)
 
     @al_engine.on(Events.ITERATION_COMPLETED)
-    def visualize(engine):
-        # check if there is an output to visualize
-        if loop.strategy.output is not None:
-            ax, fig = visualize_embeds(loop.strategy)
-            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
-            wandb.log({"Embedding": wandb.Image(fig)}) 
-
-    @al_engine.on(Events.ITERATION_COMPLETED)
-    def validate_and_test(engine):
+    def evaluate_and_log(engine):
         # create validation and test dataloaders
         val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
         test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
         # run on validation data
-        state = validator.run(val_loader)
-        print("Validation Metrics:", state.metrics)
+        val_metrics = validator.run(val_loader).metrics
+        print("Validation Metrics:", val_metrics)
 
         # run on test data
-        tester.run(test_loader)
-        print("Test Metrics:", state.metrics)
+        test_metrics = tester.run(test_loader).metrics
+        print("Test Metrics:", test_metrics)
+
+        # don't log test confusion matrix    
+        test_metrics = test_metrics.copy()
+        test_metrics.pop('cm')
+        # log all remaining metrics to weights and biases
+        wandb.log(
+            data=(trainer.state.metrics | val_metrics | test_metrics),
+            step=len(engine.train_dataset)
+        )
+    
+        # check if there is an output to visualize
+        if loop.strategy.output is not None:
+            ax, fig = visualize_embeds(loop.strategy)
+            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
+            wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
     
     # add metrics to active learning engine
     wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
@@ -154,42 +167,11 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
             # point of learning curve given
             # by iteration and accuracy value
             al_engine.state.iteration,
-            tester.state.metrics['A']
+            tester.state.metrics['test/A']
         )
     )
     wss.attach(al_engine, "test/wss")
     area.attach(al_engine, "test/Area(Accuracy)")
-
-    config = vars(args)
-    config['dataset'] = ds['train'].info.builder_name
-    # create wandb logger, project and run name are set
-    # as environment variables (see `run.sh`)
-    logger = WandBLogger(config=config)
-    # log train metrics after each train run
-    logger.attach_output_handler(
-        trainer,
-        event_name=Events.COMPLETED,
-        tag="train",
-        metric_names='all',
-        output_transform=lambda *_: {'steps': trainer.state.iteration},
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
-    )
-    # log validation metrics
-    logger.attach_output_handler(
-        validator,
-        event_name=Events.COMPLETED,
-        tag="val",
-        metric_names='all',
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
-    )
-    # log test metrics
-    logger.attach_output_handler(
-        tester,
-        event_name=Events.COMPLETED,
-        tag="test",
-        metric_names=['L', 'A', 'R', 'P', 'F'], # avoid logging confusion matrix
-        global_step_transform=lambda *_: len(trainer.state.dataloader.dataset)
-    )
 
     # run active learning experiment
     state = al_engine.run(loop, steps=args.steps)
@@ -198,4 +180,4 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     wandb.run.summary.update(state.metrics)
 
     # run finished
-    logger.close()
+    wandb.finish(quiet=True)

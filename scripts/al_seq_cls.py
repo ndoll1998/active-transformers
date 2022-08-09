@@ -51,7 +51,7 @@ def build_strategy(args, model):
     elif args.strategy == 'least-confidence': return LeastConfidence(model)
     elif args.strategy == 'prediction-entropy': return PredictionEntropy(model)
     elif args.strategy == 'badge': return BadgeForSequenceClassification(model.bert, model.classifier)
-    elif args.strategy == 'alps': return Alps(model, mlm_prob=0.15)
+    elif args.strategy == 'alps': return AlpsConstantEmbeddings(model, mlm_prob=0.15)
     elif args.strategy == 'egl': return EglByTopK(model, k=3)
     elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
     elif args.strategy == 'entropy-over-max': return EntropyOverMax(model)
