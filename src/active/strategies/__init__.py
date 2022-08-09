@@ -9,7 +9,10 @@ from .badge import (
     BadgeForSequenceClassification,
     BadgeForTokenClassification
 )
-from .alps import Alps
+from .alps import (
+    Alps,
+    AlpsConstantEmbeddings
+)
 from .egl import (
     EglByTopK,
     EglBySampling,
