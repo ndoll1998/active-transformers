@@ -53,6 +53,9 @@ class ActiveLoop(object):
     def step(self) -> Subset:
         return self.apply_strategy(self.strategy)
 
+    def __len__(self) -> int:
+        return len(self.pool) // self.query_size
+
     def __iter__(self):
         # apply initial heuristic
         yield self.init_step()

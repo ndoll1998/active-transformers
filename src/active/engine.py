@@ -138,7 +138,7 @@ class ActiveLearningEngine(Engine):
     def run(
         self, 
         loop:ActiveLoop, 
-        steps:Optional[int] =-1,
+        steps:Optional[int] =None,
         seed:Optional[int] =None
     ) -> State:
         return super(ActiveLearningEngine, self).run(
