@@ -1,4 +1,5 @@
 import datasets
+import numpy as np
 from transformers import PreTrainedTokenizer
 from itertools import chain
 
@@ -39,37 +40,37 @@ class SequenceTaggingProcessor(object):
 
     def __call__(self, item:dict) -> dict:
 
-        # tokenize
-        tokens = [self.tokenizer.tokenize(token) for token in item['tokens']]
+        # tokenize to find number of wordpieces per token
+        n_subtokens = [len(self.tokenizer.tokenize(token)) for token in item['tokens']]
         # build bio tags on sub-token level
         b2i = self.begin2in
         tags = [
-            [tag] + [b2i.get(tag, tag)] * (len(ts) - 1) 
-            for tag, ts in zip(item[self.tags_field], tokens)
+            [tag] + [b2i.get(tag, tag)] * (n - 1) 
+            for tag, n in zip(item[self.tags_field], n_subtokens)
         ]
-        # concatenate sub-tokens and tags
-        tokens = list(chain(*tokens))
+        # concatenate sub-token tags
         tags = list(chain(*tags))
-        # check sizes
-        assert len(tokens) == len(tags), "Mismatch between tokens (%i) and tags (%i)" % (len(tokens), len(tags))
 
         # build input ids and attention mask
-        input_ids = self.tokenizer.encode(
-            text=tokens, 
+        encoding = self.tokenizer.encode_plus(
+            text=item['tokens'], 
             add_special_tokens=True, 
             padding='max_length', 
             truncation=True, 
             max_length=self.max_length,
-            is_split_into_words=True
+            is_split_into_words=True,
+            return_attention_mask=True,
+            return_special_tokens_mask=True
         )
-        attention_mask = [token_id != self.tokenizer.pad_token_id for token_id in input_ids]
 
-        # pad tags to match max-sequence-length
-        tags = tags[:self.max_length] + [self.tag_pad_token_id] * max(0, self.max_length - len(tags))
-
+        valid_tokens_mask = ~np.asarray(encoding.special_tokens_mask, dtype=bool)
+        # build padded tags
+        padded_tags = np.full(self.max_length, self.tag_pad_token_id)
+        padded_tags[valid_tokens_mask] = tags[:valid_tokens_mask.sum()]
+ 
         # return all features
         return {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'labels': tags
+            'input_ids': encoding.input_ids,
+            'attention_mask': encoding.attention_mask,
+            'labels': padded_tags.tolist()
         }
