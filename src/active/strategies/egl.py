@@ -258,17 +258,22 @@ class EglByTopK(_EglBase):
                     hallucinated labels selected for loss computation. Must be of the
                     shape (n, k).
         """
-        # assert logits.ndim == 2, "Expected simple sequence classification, i.e. logits of two dimensions but got logits of shape %s" % str(logits.shape)
         k = min(self.k, logits.size(-1))
         probs = torch.softmax(logits, dim=-1) 
-        probs, labels = torch.topk(probs, k=k, dim=-1)
+        # sequence classification
+        if logits.ndim == 2:
+            return torch.topk(probs, k=k, dim=-1)
         # handle token classification
         if logits.ndim == 3:
+            # build the top-k sequences with highest a posteriori probability
+            
+
+            probs, labels = torch.topk(probs, k=k, dim=-1)
             # token classification, compute probability for label sequence
             probs = probs if mask is None else probs.masked_fill_(~mask.unsqueeze(-1), 1.0)
             probs = torch.prod(probs, dim=1)
-        # return probabilities and labels
-        return probs, labels
+            # return probabilities and labels
+            return probs, labels
 
 
 class EglBySampling(_EglBase):
@@ -320,7 +325,7 @@ class EglBySampling(_EglBase):
         ).reshape(*logits.size()[:-1], k)
         # token classification, apply mask to disable loss for invalid tokens
         if (mask is not None) and (logits.ndim == 3):
-            labels.masked_fill_(~mask.unsqueeze(-1), -100)
+            labels.masked_fill_(~mask.bool().unsqueeze(-1), -100)
         # weight each label the same, weighting is done by sampling
         return torch.ones((logits.size(0), k), device=labels.device), labels
 
