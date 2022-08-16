@@ -29,7 +29,7 @@ def build_argument_parser() -> ArgumentParser:
     parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
     parser.add_argument("--lr-decay", type=float, default=1.0, help="Layer-wise learining rate decay")
     parser.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
-    parser.add_argument("--steps", type=int, default=20, help="Number of Active Learning Steps")
+    parser.add_argument("--steps", type=int, default=-1, help="Number of Active Learning Steps. Defaults to -1 meaning the whole dataset will be processed.")
     parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
     parser.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
     parser.add_argument("--batch-size", type=int, default=12, help="Batch size to use during training and evaluation")
@@ -39,7 +39,6 @@ def build_argument_parser() -> ArgumentParser:
     parser.add_argument('--min-length', type=int, default=0, help="Minimum sequence length an example must fulfill. Samples with less tokens will be filtered from the dataset.")
     parser.add_argument("--max-length", type=int, default=64, help="Maximum length of input sequences")
     parser.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
-    parser.add_argument("--model-cache", type=str, default="/tmp/model-cache", help="Cache to save the intermediate models at.")
     parser.add_argument("--seed", type=int, default=2022, help="Random seed")
     # return parser
     return parser
@@ -91,7 +90,7 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
     wandb.init(config=config)
     
     # create the trainer, validater and tester
-    trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True, cache_dir=args.model_cache)
+    trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True)
     validator = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
@@ -129,8 +128,8 @@ def run_active_learning(args, loop, model, optim, scheduler, ds) -> None:
 
     @al_engine.on(ConvergenceRetryEvents.CONVERGED | ConvergenceRetryEvents.CONVERGENCE_RETRY_COMPLETED)
     def on_converged(engine):
-        print("Training Converged:", engine.trainer.converged)
-        print("Final Train Accuracy:", engine.trainer.train_accuracy)
+        print("Training Converged:", engine.trainer.converged, "Train F-Score: %.03f" % trainer.state.metrics['train/F'])
+        # print("Final Train Accuracy:", engine.trainer.train_accuracy)
 
     @al_engine.on(Events.ITERATION_COMPLETED)
     def evaluate_and_log(engine):

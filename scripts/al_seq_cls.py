@@ -10,7 +10,6 @@ from transformers import (
 from src.active.loop import ActiveLoop
 from src.active.strategies import *
 # import optimization utilities
-from src.active.utils.schedulers import LinearWithWarmup
 from src.active.utils.params import TransformerParameterGroups
 # import ignite progress bar and script utils
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
@@ -75,8 +74,14 @@ if __name__ == '__main__':
 
     # load model and create optimizer
     model = AutoModelForSequenceClassification.from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW(TransformerParameterGroups(model, lr=args.lr, lr_decay=args.lr_decay, weight_decay=args.weight_decay))
-    scheduler = LinearWithWarmup(optim, warmup_proportion=0.1)
+    optim = torch.optim.AdamW(
+        TransformerParameterGroups(
+            model, 
+            lr=args.lr, 
+            lr_decay=args.lr_decay, 
+            weight_decay=args.weight_decay
+        )
+    )
 
     # create strategy and attach progress bar to strategy
     strategy = build_strategy(args, model)
@@ -86,7 +91,7 @@ if __name__ == '__main__':
     loop = ActiveLoop(
         pool=ds['train'],
         strategy=strategy,
-        batch_size=16,
+        batch_size=64,
         query_size=args.query_size,
         init_strategy=strategy if isinstance(strategy, Alps) else Random()
     )

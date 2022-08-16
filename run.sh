@@ -1,5 +1,5 @@
 export PYTHONPATH=.
-export CUDA_VISIBLE_DEVICES='0'
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-'0'}
 
 # make sure config is provided
 if [ -z $1 ]; then
@@ -15,20 +15,25 @@ fi
 # load config
 source $1
 
-# create random group id
-GROUP_ID=$(cat /proc/sys/kernel/random/uuid | head -c 8)
+# set default random group id if not set
+GROUP_ID="${GROUP_ID:-$(cat /proc/sys/kernel/random/uuid | head -c 8)}"
 # set up weights and biases
-export WANDB_MODE='online'
-export WANDB_PROJECT="active-transformers"
+export WANDB_MODE="online"
+export WANDB_PROJECT="active-transformers-all-data"
 export WANDB_RUN_GROUP="$EXPERIMENT-$GROUP_ID"
-export WANDB_TAGS="AL,bert,seq-cls"
 
 # model cache directory
-MODEL_CACHE=/tmp/model-cache-$GROUP_ID
+CACHE_ID=$(cat /proc/sys/kernel/random/uuid | head -c 8)
+MODEL_CACHE=/tmp/model-cache-$CACHE_ID
 
 # strategies to apply
-STRATEGIES="random least-confidence prediction-entropy badge alps egl"
-STRATEGIES="entropy-over-max least-confidence random"
+DEFAULT_STRATEGIES="badge" #random least-confidence prediction-entropy entropy-over-max badge alps egl-sampling"
+STRATEGIES=${STRATEGIES:-$DEFAULT_STRATEGIES}
+
+# use full dataset
+AL_STEPS=300
+QUERY_SIZE=32
+BATCH_SIZE=64
 
 # run experiment
 for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
@@ -36,9 +41,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
     for STRATEGY in $STRATEGIES; do
 
         # set wandb run name
-        export WANDB_NAME="$EXPERIMENT-$STRATEGY"
-        # create model cache
-        mkdir $MODEL_CACHE
+        export WANDB_NAME="$EXPERIMENT-$STRATEGY-$SEED"
 
         # run training
         python $SCRIPT \
@@ -57,11 +60,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
             --acc-threshold $ACCURACY_THRESHOLD \
             --max-length $MAX_LENGTH \
             --min-length $MIN_LENGTH \
-            --model-cache $MODEL_CACHE \
             --seed $SEED
         
-        # clear model cache
-        rm -r $MODEL_CACHE
-
     done
 done

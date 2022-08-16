@@ -1,19 +1,51 @@
+import io
 # import torch
 import torch
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import _LRScheduler, LambdaLR
 from torch.utils.data import DataLoader
 # import ignite
 import ignite.distributed as idist
 from ignite.engine import Engine, Events
 from ignite.metrics import Average, Accuracy
-from ignite.handlers import EarlyStopping, Checkpoint, DiskSaver
+from ignite.handlers import EarlyStopping, Checkpoint
+from ignite.handlers.checkpoint import BaseSaveHandler
 # transformers
 from transformers import PreTrainedModel
 # others
 from .schedulers import _TrainingStepsDependentMixin
 from copy import deepcopy
+from collections import OrderedDict
 from typing import Optional
+
+class MemorySaveHandler(BaseSaveHandler, OrderedDict):
+    
+    def __init__(self, max_length:int =1) -> None:
+        super(MemorySaveHandler, self).__init__()
+        self.max_length = max_length
+
+    def __call__(self, checkpoint, filename, metadata=None) -> None:
+        # store checkpoint in bytes buffer
+        # do this instead of copying the checkpoint
+        # to avoid copies on gpu memory
+        buf = io.BytesIO()
+        torch.save(checkpoint, buf)
+        # save copy of checkpoint in memory dict
+        self[filename] = buf
+        # remove very last element if memory exceeds size
+        if len(self) > self.max_length:
+            self.popitem(last=False)
+
+    def remove(self, filename):
+        # remove object from memory
+        self.pop(filename)
+
+    def load(self, filename):
+        # get buffer
+        buf = dict.__getitem__(self, filename)
+        buf.seek(0)
+        # load buffer
+        return torch.load(buf)
 
 class Evaluator(Engine):
     """ Engine evaluating a transformer model on a given dataset.
@@ -78,7 +110,8 @@ class Trainer(Evaluator):
         Args:
             model (PreTrainedModel): pre-trained transformer model to train
             optim (Optimizer): optimizer to use for parameter updates
-            scheduler (_LRScheduler): learning rate scheduler
+            scheduler (Optional[_LRScheduler]): 
+                learning rate scheduler. Defaults to LambdaLR(optim, lambda _: 1.0).
             acc_theshold (Optional[float]): 
                 accuracy threshold, training is stopped if threshold is 
                 surpassed on training data (Default: 1.0)
@@ -93,21 +126,17 @@ class Trainer(Evaluator):
                 will be resetted. (Default: False)
             val_loader (Optional[DataLoader]):
                 validation data loader. (Default: Train data loader)
-            cache_dir (Optional[str]):
-                cache directory to store current best model parameters.
-                (Default: /tmp/model-cache)
     """
 
     def __init__(
         self, 
         model:PreTrainedModel, 
         optim:Optimizer, 
-        scheduler:_LRScheduler,
+        scheduler:Optional[_LRScheduler] =None,
         acc_threshold:Optional[float] =1.0, 
         patience:Optional[int] =None,
         incremental:Optional[bool] =False,
-        val_loader:DataLoader =None,
-        cache_dir:Optional[str] ="/tmp/model-cache"
+        val_loader:DataLoader =None
     ) -> None:
         # save arguments
         self.acc_threshold = acc_threshold
@@ -115,11 +144,14 @@ class Trainer(Evaluator):
 
         # save optimizer and initialize evaluator
         self.optim = idist.auto_optim(optim)
-        self.scheduler = scheduler
+        self.scheduler = scheduler or LambdaLR(optim, lambda _: 1.0)
         super(Trainer, self).__init__(model)
         # save validation dataloader
         self.val_loader = val_loader
 
+        # reset trainer state on startup
+        self.add_event_handler(Events.STARTED, type(self)._reset_state)
+        
         # save initial checkpoint
         self.init_model_ckpt = deepcopy(self.model.state_dict())
         self.init_optim_ckpt = deepcopy(self.optim.state_dict())
@@ -132,7 +164,8 @@ class Trainer(Evaluator):
         self.train_evaluator = Evaluator(model)
         Accuracy(output_transform=Evaluator.get_logits_and_labels).attach(self.train_evaluator, 'A')
         # check if training accuracy threshold is reached
-        self.add_event_handler(Events.EPOCH_COMPLETED, type(self)._check_convergence)
+        if self.acc_threshold < 1.0:
+            self.add_event_handler(Events.EPOCH_COMPLETED, type(self)._check_convergence)
 
         # create validation evaluator
         self.val_evaluator = Evaluator(model)
@@ -149,9 +182,9 @@ class Trainer(Evaluator):
                 'train-evaluator': self.train_evaluator,
                 'val-evaluator': self.val_evaluator
             },
-            save_handler=DiskSaver(dirname=cache_dir, require_empty=False),
+            save_handler=MemorySaveHandler(),
+            n_saved=1,
             score_function=lambda e: -e.state.metrics['L'],
-            n_saved=1
         )
         self.val_evaluator.add_event_handler(Events.COMPLETED, self.ckpt)
         # add checkpoint event handlers
@@ -199,6 +232,17 @@ class Trainer(Evaluator):
         # return all outputs for logging and metrics computation
         return out
 
+    def _reset_state(self):
+        """ Event handler to reset the trainer state. Called on `STARTED`. """
+        # usually trainer tries to resume run if state holds unfinished runs
+        # due to early stopping or other convergence criteria
+        # to avoid that the state's progress is reset at the start of the run
+        self.state.epoch = 0
+        self.state.iteration = 0
+        # also just making sure early stopping doesn't reuse metrics from
+        # previous runs
+        self.state.metrics.clear()
+
     def _load_init_ckpt(self):
         """ Event handler to load the initial checkpoints. Called on `STARTED`. """
         if not self.incremental:
@@ -239,13 +283,15 @@ class Trainer(Evaluator):
         """ Event handler loading the best checkpoint after training finished.
             Called on 'COMPLETED'.
         """
+        # load buffer from checkpoint
+        # load objects from buffer
         self.ckpt.load_objects(
             to_load={
                 'model': self.model,
                 'train-evaluator': self.train_evaluator,
                 'val-evaluator': self.val_evaluator
             },
-            checkpoint=self.ckpt.last_checkpoint
+            checkpoint=self.ckpt.save_handler.load(self.ckpt.last_checkpoint)
         )
 
     def _reset_ckpt(self):
