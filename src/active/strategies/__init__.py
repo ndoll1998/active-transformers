@@ -15,7 +15,5 @@ from .alps import (
 )
 from .egl import (
     EglByTopK,
-    EglBySampling,
-    EglFastByTopK,
-    EglFastBySampling
+    EglBySampling
 )

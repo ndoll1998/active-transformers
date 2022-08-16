@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
+from transformers.utils import ModelOutput
 from types import SimpleNamespace
 
 class PseudoModel(nn.Module):
@@ -12,18 +13,27 @@ class PseudoModel(nn.Module):
         return SimpleNamespace(**kwargs)
         
 
-class ClassificationModel(nn.Linear):
+class ClassificationModelOutput(ModelOutput):
+    """ Output of classification model """
+    logits: torch.FloatTensor =None
+    loss: torch.FloatTensor =None
+
+class ClassificationModel(nn.Module):
     """ Simple linear classification model used for testing """
 
-    def forward(self, x:torch.FloatTensor, labels:torch.LongTensor):
+    def __init__(self, *args, **kwargs):
+        super(ClassificationModel, self).__init__()
+        self.linear = nn.Linear(*args, **kwargs)
+
+    def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None):
         # predict and compute loss
-        logits = super(ClassificationModel, self).forward(x)
-        loss = F.cross_entropy(logits, labels)
-        # return logits and labels as dict
-        return {
-            'logits': logits,
-            'loss': loss
-        }
+        logits = self.linear(x)
+        loss = F.cross_entropy(logits, labels) if labels is not None else None
+        # return logits and labels as namespace
+        return ClassificationModelOutput(
+            logits=logits,
+            loss=loss
+        )
 
 class NamedTensorDataset(TensorDataset):
     """ Helper Dataset similar to `TensorDataset` but returns dictionaries instead of tuples """

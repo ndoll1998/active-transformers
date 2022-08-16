@@ -38,8 +38,8 @@ class TestTrainer:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda *_: 1.0)
 
         # get initial weights of the model
-        init_weight = model.weight.clone()
-        init_bias = model.bias.clone()
+        init_weight = model.linear.weight.clone()
+        init_bias = model.linear.bias.clone()
 
         # create trainer
         trainer = Trainer(
@@ -51,14 +51,14 @@ class TestTrainer:
         # on start make sure the weights are the initial weights
         @trainer.on(Events.STARTED)
         def check_init_weights(engine):
-            assert (model.weight == init_weight).all()
-            assert (model.bias == init_bias).all()
+            assert (model.linear.weight == init_weight).all()
+            assert (model.linear.bias == init_bias).all()
             
         # on finish make sure the model weights are updated
         @trainer.on(Events.COMPLETED)
         def check_updated_weights(engine):
-            assert (model.weight != init_weight).any()
-            assert (model.bias != init_bias).any()
+            assert (model.linear.weight != init_weight).any()
+            assert (model.linear.bias != init_bias).any()
         
         # train model
         for _ in range(2):
@@ -77,8 +77,8 @@ class TestTrainer:
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda *_: 1.0)
 
         # get initial weights of the model
-        cur_weight = model.weight.clone()
-        cur_bias = model.bias.clone()
+        cur_weight = model.linear.weight.clone()
+        cur_bias = model.linear.bias.clone()
     
         # create trainer
         trainer = Trainer(
@@ -91,14 +91,14 @@ class TestTrainer:
         # on start make sure the weights are the initial weights
         @trainer.on(Events.STARTED)
         def check_init_weights(engine):
-            assert (model.weight == cur_weight).all()
-            assert (model.bias == cur_bias).all()
+            assert (model.linear.weight == cur_weight).all()
+            assert (model.linear.bias == cur_bias).all()
             
         # on finish update the current weights
         @trainer.on(Events.COMPLETED)
         def update_weights(engine):
-            cur_weight[:] = model.weight[:]
-            cur_bias[:] = model.bias[:]
+            cur_weight[:] = model.linear.weight[:]
+            cur_bias[:] = model.linear.bias[:]
         
         # train model
         for _ in range(2):
