@@ -4,7 +4,7 @@ import torch.nn.functional as F
 # import common components
 from tests.common import ClassificationModel, NamedTensorDataset
 # import egl strategy and gradient norm
-from src.active.strategies.egl_new import (
+from src.active.strategies.egl import (
     GoodfellowGradientNorm,
     EglByTopK,
     EglBySampling
