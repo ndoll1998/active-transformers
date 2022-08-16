@@ -12,7 +12,6 @@ from src.active.utils.schedulers import LinearWithWarmup
 # import others
 import pytest
 from tests.common import ClassificationModel, NamedTensorDataset
-from tempfile import TemporaryDirectory
 
 class TestTrainer:
     """ Test cases for the `Trainer` class """
@@ -42,31 +41,28 @@ class TestTrainer:
         init_weight = model.weight.clone()
         init_bias = model.bias.clone()
 
-        with TemporaryDirectory() as tmp_dir:
-            
-            # create trainer
-            trainer = Trainer(
-                model=model,
-                optim=optim,
-                scheduler=scheduler,
-                cache_dir=tmp_dir
-            )
+        # create trainer
+        trainer = Trainer(
+            model=model,
+            optim=optim,
+            scheduler=scheduler,
+        )
 
-            # on start make sure the weights are the initial weights
-            @trainer.on(Events.STARTED)
-            def check_init_weights(engine):
-                assert (model.weight == init_weight).all()
-                assert (model.bias == init_bias).all()
-                
-            # on finish make sure the model weights are updated
-            @trainer.on(Events.COMPLETED)
-            def check_updated_weights(engine):
-                assert (model.weight != init_weight).any()
-                assert (model.bias != init_bias).any()
+        # on start make sure the weights are the initial weights
+        @trainer.on(Events.STARTED)
+        def check_init_weights(engine):
+            assert (model.weight == init_weight).all()
+            assert (model.bias == init_bias).all()
             
-            # train model
-            for _ in range(2):
-                trainer.run(loader, max_epochs=2)
+        # on finish make sure the model weights are updated
+        @trainer.on(Events.COMPLETED)
+        def check_updated_weights(engine):
+            assert (model.weight != init_weight).any()
+            assert (model.bias != init_bias).any()
+        
+        # train model
+        for _ in range(2):
+            trainer.run(loader, max_epochs=2)
 
     def test_incremental_trainer(self):
         """ Test incremental trainer setup, i.e. test if the model of the 
@@ -83,33 +79,30 @@ class TestTrainer:
         # get initial weights of the model
         cur_weight = model.weight.clone()
         cur_bias = model.bias.clone()
-        
-        with TemporaryDirectory() as tmp_dir:
-            
-            # create trainer
-            trainer = Trainer(
-                model=model,
-                optim=optim,
-                scheduler=scheduler,
-                incremental=True,
-                cache_dir=tmp_dir
-            )
+    
+        # create trainer
+        trainer = Trainer(
+            model=model,
+            optim=optim,
+            scheduler=scheduler,
+            incremental=True,
+        )
 
-            # on start make sure the weights are the initial weights
-            @trainer.on(Events.STARTED)
-            def check_init_weights(engine):
-                assert (model.weight == cur_weight).all()
-                assert (model.bias == cur_bias).all()
-                
-            # on finish update the current weights
-            @trainer.on(Events.COMPLETED)
-            def update_weights(engine):
-                cur_weight[:] = model.weight[:]
-                cur_bias[:] = model.bias[:]
+        # on start make sure the weights are the initial weights
+        @trainer.on(Events.STARTED)
+        def check_init_weights(engine):
+            assert (model.weight == cur_weight).all()
+            assert (model.bias == cur_bias).all()
             
-            # train model
-            for _ in range(2):
-                trainer.run(loader, max_epochs=2)
+        # on finish update the current weights
+        @trainer.on(Events.COMPLETED)
+        def update_weights(engine):
+            cur_weight[:] = model.weight[:]
+            cur_bias[:] = model.bias[:]
+        
+        # train model
+        for _ in range(2):
+            trainer.run(loader, max_epochs=2)
 
     def test_prepare_scheduler(self):
         """ Test if the learning rate scheduler is prepared correctly, i.e.
@@ -122,20 +115,17 @@ class TestTrainer:
         with pytest.warns(UserWarning, match="Number of training steps not set!"):
             scheduler = LinearWithWarmup(optim, warmup_proportion=0.1)
 
-        with TemporaryDirectory() as tmp_dir:
-            
-            # create trainer
-            trainer = Trainer(
-                model=model,
-                optim=optim,
-                scheduler=scheduler,
-                incremental=True,
-                cache_dir=tmp_dir
-            )
-       
-            for (num_samples, num_epochs) in [(4, 1), (16, 1), (4, 4), (16, 4)]:
-                # create dataloader
-                loader = self.create_random_loader(num_samples, 2)
-                trainer.run(loader, max_epochs=num_epochs)
-                # test scheduler training steps
-                assert scheduler.num_training_steps == len(loader) * num_epochs
+        # create trainer
+        trainer = Trainer(
+            model=model,
+            optim=optim,
+            scheduler=scheduler,
+            incremental=True,
+        )
+   
+        for (num_samples, num_epochs) in [(4, 1), (16, 1), (4, 4), (16, 4)]:
+            # create dataloader
+            loader = self.create_random_loader(num_samples, 2)
+            trainer.run(loader, max_epochs=num_epochs)
+            # test scheduler training steps
+            assert scheduler.num_training_steps == len(loader) * num_epochs
