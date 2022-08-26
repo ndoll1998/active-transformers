@@ -3,7 +3,7 @@ import numpy as np
 from transformers import PreTrainedTokenizer
 from itertools import chain
 
-class SequenceTaggingProcessor(object):
+class TokenClassificationProcessor(object):
 
     def __init__(
         self,
