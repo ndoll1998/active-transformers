@@ -59,11 +59,10 @@ def prepare_datasets(ds, processor, filter_):
     # process and filter datasets
     ds = {
         key: dataset \
-            .map(processor, batched=False, desc=key)
-            .filter(filter_, batched=False, desc=key)
+            .map(processor, batched=False, desc=key, load_from_cache_file=False)
+            .filter(filter_, batched=False, desc=key, load_from_cache_file=False)
         for key, dataset in ds.items()
     }
-
     # set data formats
     for dataset in ds.values():
         dataset.set_format(
@@ -187,7 +186,7 @@ if __name__ == '__main__':
 
     # prepare dataset
     ds = prepare_datasets(ds, processor, filter_)
-    
+
     ModelTypes = {
         'sequence': AutoModelForSequenceClassification,
         'token': AutoModelForTokenClassification
@@ -285,6 +284,8 @@ if __name__ == '__main__':
             ax, fig = visualize_embeds(loop.strategy)
             ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
+            # close figure
+            plt.close(fig)
     
     # add metrics to active learning engine
     wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
