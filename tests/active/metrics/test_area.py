@@ -4,7 +4,7 @@ from src.active.metrics import AreaUnderLearningCurve
 class TestAreaUnderLearningCurve:
     """ Test for area under learning curve metric """
 
-    def test_step_normalization(self):
+    def test_normalization(self):
         # linear sample curve
         x = np.arange(0, 100, step=5)
         y = np.linspace(0, 1, x.shape[0])
@@ -23,7 +23,19 @@ class TestAreaUnderLearningCurve:
         list(map(area.update, zip(x * 30, y)))
         valB = area.compute()
     
-        assert valA == valB
+        # reset, update with all pairs defining curve
+        # and compute final metric score
+        area.reset()
+        list(map(area.update, zip(x, y * 30)))
+        valC = area.compute()
+        
+        # reset, update with all pairs defining curve
+        # and compute final metric score
+        area.reset()
+        list(map(area.update, zip(x * 30, y * 30)))
+        valD = area.compute()
+        
+        assert valA == valB == valC == valD
 
     def test_linear(self):
         # linear sample curve
