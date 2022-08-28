@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
@@ -12,7 +13,7 @@ from transformers import (
 # import active learning components
 from src.active.loop import ActiveLoop
 from src.active.strategies import *
-from src.active.engine import ConvergenceRetryEvents, ActiveLearningEngine
+from src.active.engine import ActiveLearningEvents, ActiveLearningEngine
 from src.active.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from src.active.utils.engines import Trainer, Evaluator
 # import data processor for token classification tasks
@@ -249,13 +250,35 @@ if __name__ == '__main__':
     
     @al_engine.on(Events.ITERATION_STARTED)
     def on_started(engine):
+        # log active learning step
         i = engine.state.iteration
         print("-" * 8, "AL Step %i" % i, "-" * 8)
+        
+    @al_engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
+    def save_selected_samples(engine):
+        # create path to save samples in
+        path = os.path.join(
+            "output",
+            os.environ["WANDB_RUN_GROUP"],
+            os.environ["WANDB_NAME"],
+        )
+        os.makedirs(path, exist_ok=True)
+        # get selected samples and re-create input texts
+        data = engine.state.batch
+        texts = tokenizer.batch_decode(
+            sequences=[sample['input_ids'] for sample in data],
+            skip_special_tokens=True
+        )
+        # save selected samples to file
+        with open(os.path.join(path, "step-%i.txt" % len(engine.train_dataset)), 'w+') as f:
+            f.write('\n'.join(texts))
 
-    @al_engine.on(ConvergenceRetryEvents.CONVERGED | ConvergenceRetryEvents.CONVERGENCE_RETRY_COMPLETED)
+    @al_engine.on(ActiveLearningEvents.CONVERGED | ActiveLearningEvents.CONVERGENCE_RETRY_COMPLETED)
     def on_converged(engine):
-        print("Training Converged:", engine.trainer.converged, "Train F-Score: %.03f" % trainer.state.metrics['train/F'])
-        # print("Final Train Accuracy:", engine.trainer.train_accuracy)
+        print(
+            "Training Converged:", engine.trainer.converged, 
+            "Train F-Score: %.03f" % trainer.state.metrics['train/F']
+        )
 
     @al_engine.on(Events.ITERATION_COMPLETED)
     def evaluate_and_log(engine):

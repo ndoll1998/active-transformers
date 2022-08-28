@@ -8,18 +8,26 @@ from .loop import ActiveLoop
 from .utils.engines import Trainer
 from typing import Optional
 
-class ConvergenceRetryEvents(EventEnum):
-    """ Costum Events for training model training in 
-        an active learning step. A model might be trained
+class ActiveLearningEvents(EventEnum):
+    """ Costum Events fired by Active Learning Engine.
+
+        This list of events also contains some convergence
+        management events. I.e. a model might be trained
         for multiple tries until the trainers convergence
         criteria are met.
 
         Events:
+            DATA_SAMPLING_COMPLETE: 
+                called after data is sampled and split into training and validation.
+                The `engine.training_data` and `engine.validation_data` are up to date.
             CONVERGENCE_RETRY_STARTED: called on start of model training
             CONVERGENCE_RETRY_COMPLETED: called on completion of a model training try
             CONVERGED: called when trainer convergence criteria is met
             DIVERGED: called when trainer convergence criteria is not met after all retries
     """
+
+    DATA_SAMPLING_COMPLETED = "data-sampling-completed"
+    # convergence events
     CONVERGENCE_RETRY_STARTED = "convergence_retry_started"
     CONVERGENCE_RETRY_COMPLETED = "convergence_retry_completed"
     CONVERGED = "converged"
@@ -67,7 +75,7 @@ class ActiveLearningEngine(Engine):
         super(ActiveLearningEngine, self).__init__(type(self).step)
 
         # register costum events
-        self.register_events(*ConvergenceRetryEvents)
+        self.register_events(*ActiveLearningEvents)
 
         # save trainer and other arguments
         self.trainer = trainer
@@ -115,25 +123,28 @@ class ActiveLearningEngine(Engine):
         # create datasets
         self.train_data.append(train_samples)
         self.val_data.append(val_samples)
+
+        # fire data generated event
+        self.fire_event(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
         
         # create dataloaders and update validation loader in trainer
         train_loader = DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
         self.trainer.val_loader = DataLoader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
 
         for _ in range(self.max_convergence_retries):
-            self.fire_event(ConvergenceRetryEvents.CONVERGENCE_RETRY_STARTED)
+            self.fire_event(ActiveLearningEvents.CONVERGENCE_RETRY_STARTED)
             # train model on dataset
             self.trainer.run(train_loader, **self.trainer_run_kwargs)
             # check convergence
             if self.trainer.converged:
-                self.fire_event(ConvergenceRetryEvents.CONVERGED)
+                self.fire_event(ActiveLearningEvents.CONVERGED)
                 break
             # call event retry completed
-            self.fire_event(ConvergenceRetryEvents.CONVERGENCE_RETRY_COMPLETED)
+            self.fire_event(ActiveLearningEvents.CONVERGENCE_RETRY_COMPLETED)
 
         else:
             # diverged
-            self.fire_event(ConvergenceRetryEvents.DIVERGED)
+            self.fire_event(ActiveLearningEvents.DIVERGED)
 
     def run(
         self, 
