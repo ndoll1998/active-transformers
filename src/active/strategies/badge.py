@@ -123,7 +123,7 @@ class Badge(AbstractStrategy):
         w = -(probs - F.one_hot(preds, num_classes=probs.size(-1)))
         if self.is_tok_cls and ('attention_mask' in batch):
             # apply attention mask in case of token classification
-            mask = batch['attention_mask']
+            mask = batch['attention_mask'].bool()
             w[~mask] = 0.0
         g = w.unsqueeze(-1) * embeds.unsqueeze(-2)
         # return gradient embedding

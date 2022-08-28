@@ -62,7 +62,7 @@ class UncertaintyStrategy(AbstractStrategy):
             return scores
         
         # apply mask to scores
-        mask = batch['attention_mask']
+        mask = batch['attention_mask'].bool()
         scores[~mask, ...] = 0.0
         # reduce scores
         return self.reduce_scores(scores, mask & ~ignore_mask)
