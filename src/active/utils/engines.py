@@ -160,12 +160,13 @@ class Trainer(Evaluator):
         self.add_event_handler(Events.STARTED, type(self)._load_init_ckpt)
         self.add_event_handler(Events.STARTED, type(self)._prepare_scheduler)
 
-        # create train evaluator
-        self.train_evaluator = Evaluator(model)
-        Accuracy(output_transform=Evaluator.get_logits_and_labels).attach(self.train_evaluator, 'A')
-        # check if training accuracy threshold is reached
-        if self.acc_threshold < 1.0:
-            self.add_event_handler(Events.EPOCH_COMPLETED, type(self)._check_convergence)
+        # create train accuracy metric
+        self.train_acc = Accuracy(output_transform=type(self).get_logits_and_labels)
+        # and manually attach handlers to avoid writing accuracy in state
+        self.add_event_handler(Events.EPOCH_STARTED, self.train_acc.started)
+        self.add_event_handler(Events.ITERATION_COMPLETED, self.train_acc.iteration_completed)
+        # add convergence event handler
+        self.add_event_handler(Events.EPOCH_COMPLETED, type(self)._check_convergence)
 
         # create validation evaluator
         self.val_evaluator = Evaluator(model)
@@ -178,8 +179,7 @@ class Trainer(Evaluator):
         self.ckpt = Checkpoint(
             to_save={
                 'model': self.model,
-                # also save evaluators to capture metrics corresponding to model
-                'train-evaluator': self.train_evaluator,
+                # also save evaluator to capture metrics corresponding to model
                 'val-evaluator': self.val_evaluator
             },
             save_handler=MemorySaveHandler(),
@@ -212,7 +212,7 @@ class Trainer(Evaluator):
     @property
     def train_accuracy(self) -> float:
         """ Final accuracy on training dataset """
-        return self.train_evaluator.state.metrics['A']
+        return self.train_acc.compute()
     
     def step(self, batch):
         """ Training step function executed by the engine. """
@@ -267,8 +267,7 @@ class Trainer(Evaluator):
             threshold is surpassed. Called on 'EPOCH_COMPLTED'. 
         """
         # evaluate model on train set and check accuracy
-        state = self.train_evaluator.run(self.state.dataloader)
-        if (state.metrics['A'] >= self.acc_threshold):
+        if (self.train_accuracy >= self.acc_threshold):
             self.terminate()
 
     def _validate(self):
@@ -288,7 +287,6 @@ class Trainer(Evaluator):
         self.ckpt.load_objects(
             to_load={
                 'model': self.model,
-                'train-evaluator': self.train_evaluator,
                 'val-evaluator': self.val_evaluator
             },
             checkpoint=self.ckpt.save_handler.load(self.ckpt.last_checkpoint)
