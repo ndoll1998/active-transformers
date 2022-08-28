@@ -1,6 +1,7 @@
 import datasets
 import numpy as np
 from transformers import PreTrainedTokenizer
+from functools import lru_cache
 from itertools import chain
 
 class TokenClassificationProcessor(object):
@@ -24,10 +25,10 @@ class TokenClassificationProcessor(object):
         return len(self.dataset_info.features[self.tags_field].feature.names)
 
     @property
-    def begin2in(self):
+    @lru_cache()
+    def begin2in(self) -> dict:
         # get bio labels and extract classes from it
         bio = self.dataset_info.features[self.tags_field].feature
-        
         # check label scheme
         if all(label[:2] in ["O", "O-", "B-", "I-"] for label in bio.names):
             # begin-in marked by 'B-' and 'I-'
@@ -38,19 +39,45 @@ class TokenClassificationProcessor(object):
         # fallback use identity
         return {i: i for i, _ in enumerate(bio.names)}
 
+    @property
+    @lru_cache()
+    def in2begin(self) -> dict:
+        # reverse begin-to-in mapping
+        return {i:b for b, i in self.begin2in.items()}
+
+    @property
+    def out_tag(self) -> int:
+        # TODO: extract out tag from dataset info
+        # currently assumes out tag to be zero
+        return 0
+
     def __call__(self, item:dict) -> dict:
 
         # tokenize to find number of wordpieces per token
         n_subtokens = [len(self.tokenizer.tokenize(token)) for token in item['tokens']]
-        # build bio tags on sub-token level
-        b2i = self.begin2in
+        
+        # cleanup tags
         tags = [
-            [tag] + [b2i.get(tag, tag)] * (n - 1) 
+            # continue a previous entity if
+            self.begin2in.get(tag, tag) if prev_tag in [
+                self.begin2in.get(tag, tag), # the previous tag must be the
+                self.in2begin.get(tag, tag)  # corresponding being or in tag
+            # or start a new entity
+            ] else self.in2begin.get(tag, tag)
+            for prev_tag, tag in zip(
+                [self.out_tag] + item[self.tags_field][:-1], 
+                item[self.tags_field]
+            )
+        ]
+
+        # build bio tags on sub-token level
+        tags = [
+            [tag] + [self.begin2in.get(tag, tag)] * (n - 1) 
             for tag, n in zip(item[self.tags_field], n_subtokens)
         ]
         # concatenate sub-token tags
         tags = list(chain(*tags))
-
+        
         # build input ids and attention mask
         encoding = self.tokenizer.encode_plus(
             text=item['tokens'], 
@@ -67,7 +94,7 @@ class TokenClassificationProcessor(object):
         # build padded tags
         padded_tags = np.full(self.max_length, self.tag_pad_token_id)
         padded_tags[valid_tokens_mask] = tags[:valid_tokens_mask.sum()]
- 
+
         # return all features
         return {
             'input_ids': encoding.input_ids,
