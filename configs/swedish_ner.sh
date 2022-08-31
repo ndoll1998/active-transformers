@@ -8,11 +8,6 @@ LABEL=ner_tags
 MIN_LENGTH=0
 MAX_LENGTH=128
 
-
-# active learning hyperparameters
-AL_STEPS=20
-QUERY_SIZE=25
-
 # pretrained model
 PRETRAINED_CKPT=af-ai-center/bert-base-swedish-uncased
 

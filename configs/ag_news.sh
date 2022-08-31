@@ -8,10 +8,6 @@ LABEL=label
 MIN_LENGTH=0
 MAX_LENGTH=64
 
-# active learning hyperparameters
-AL_STEPS=20
-QUERY_SIZE=25
-
 # pretrained model
 PRETRAINED_CKPT=distilroberta-base
 

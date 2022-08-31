@@ -15,15 +15,20 @@ fi
 # load config
 source $1
 
+# get active learning hyperparameters or
+# use defaults if not given
+AL_STEPS=${AL_STEPS:-30}
+QUERY_SIZE=${QUERY_SIZE:-64}
+
 # set default random group id if not set
-GROUP_ID="${GROUP_ID:-$(cat /proc/sys/kernel/random/uuid | head -c 8)}"
+GROUP_ID=${GROUP_ID:-$(cat /proc/sys/kernel/random/uuid | head -c 8)}
 # set up weights and biases
-export WANDB_MODE="disable"
+export WANDB_MODE="online"
 export WANDB_PROJECT="active-transformers-all-data"
 export WANDB_RUN_GROUP="$EXPERIMENT-$GROUP_ID"
 
 # strategies to apply
-DEFAULT_STRATEGIES="egl-sampling" #random least-confidence prediction-entropy entropy-over-max badge alps egl-sampling"
+DEFAULT_STRATEGIES="prediction-entropy" #random least-confidence prediction-entropy entropy-over-max badge alps egl-sampling"
 STRATEGIES=${STRATEGIES:-$DEFAULT_STRATEGIES}
 
 # run experiment

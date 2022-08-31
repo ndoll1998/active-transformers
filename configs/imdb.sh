@@ -8,11 +8,6 @@ LABEL=label
 MIN_LENGTH=0
 MAX_LENGTH=128
 
-
-# active learning hyperparameters
-AL_STEPS=10
-QUERY_SIZE=100
-
 # pretrained model
 PRETRAINED_CKPT=distilbert-base-uncased
 
