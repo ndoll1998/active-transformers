@@ -3,27 +3,33 @@ import torch.nn as nn
 import ignite.distributed as idist
 
 from transformers import PreTrainedModel
-from .strategy import AbstractStrategy
+from .strategy import ScoreBasedStrategy
 from .utils import move_to_device
 
 from abc import abstractmethod
 from typing import Sequence, Any, Optional
 
-class UncertaintyStrategy(AbstractStrategy):
+class UncertaintyStrategy(ScoreBasedStrategy):
     """ Abstract Base Class for uncertainty-based sampling strategies.
            
         Args:
             model (PreTrainedModel): transformer-based model used for prediction
             ignore_labels (Optional[Sequence[int]]): list of labels to ignore for computation of uncertainty scores
-    """    
+            random_sample (Optional[bool]): 
+                whether to random sample query according to distribution given by uncertainty scores.
+                Defaults to False, meaning the elements with maximum uncertainty scores are selected.
+    """
 
     def __init__(
         self,
         model:PreTrainedModel,
-        ignore_labels:Optional[Sequence[int]] =[]
+        ignore_labels:Optional[Sequence[int]] =[],
+        random_sample:Optional[bool] =False
     ) -> None:
         # initialize strategy
-        super(UncertaintyStrategy, self).__init__()
+        super(UncertaintyStrategy, self).__init__(
+            random_sample=random_sample
+        )
         # move model to available device(s)
         self.model = idist.auto_model(model)
         # save labels to ignore as tensor
@@ -66,11 +72,6 @@ class UncertaintyStrategy(AbstractStrategy):
         scores[~mask, ...] = 0.0
         # reduce scores
         return self.reduce_scores(scores, mask & ~ignore_mask)
-
-    def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
-        # check shape of scores and get topk indices
-        assert output.ndim == 1, "Expected scores to be one-dimensional but got shape %s" % str(tuple(output.size()))
-        return output.topk(k=min(query_size, output.size(0))).indices
 
 class LeastConfidence(UncertaintyStrategy):
 

@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 # import ignite
-from ignite.engine import Engine
+from ignite.engine import Engine, Events
 from ignite.handlers.stores import EpochOutputStore
 # others
 from .utils import (
@@ -13,13 +13,13 @@ from .utils import (
 )
 from functools import partial
 from abc import ABC, abstractmethod
-from typing import Any, Sequence
+from typing import Any, Sequence, Optional
 
 class AbstractStrategy(Engine, ABC):
     """ Abstract base class for active learning strategies.
         Subclasses must define the following abstract methods:
-            - process: executed by the ignite engine
-            - sample: selects samples to label given the concatenated output of the engine run
+            - `process`: executed by the ignite engine
+            - `sample`: selects samples to label given the concatenated output of the engine run
     """
 
     def __init__(self):
@@ -113,3 +113,55 @@ class AbstractStrategy(Engine, ABC):
         assert len(self._indices) == min(query_size, len(pool))
         # return the sampled indices
         return self._indices
+
+
+class ScoreBasedStrategy(AbstractStrategy):
+    """ Abstract Base Class for strategies that assign a score to each element
+        in the pool. Implements the sample function of the abstract strategy.
+        Subclasses must define the following abstract method: 
+            - `process`: executed by the ignite engine
+
+        Args:
+            random_sample (Optional[bool]): 
+                whether to random sample query according to distribution given by scores computed in `process` function.
+                Defaults to False, meaning the elements with the maximal scores are selected.
+
+    """
+
+    def __init__(
+        self,
+        random_sample:Optional[bool] =False
+    ) -> None:
+        # initialize abstract strategy
+        super(ScoreBasedStrategy, self).__init__()        
+        # attach output check function
+        self.add_event_handler(
+            Events.ITERATION_COMPLETED, 
+            type(self)._check_output
+        )
+        # whether to random sample according to
+        # scores, alternatively use arg-max
+        self.random_sample = random_sample
+
+    def _check_output(self) -> None:
+        """ Event handler checking the output. Makes sure the output is one-dimensional, 
+            i.e. assignes a score to each element in the pool. 
+        """
+        # make sure output is a single score for each item in the current batch
+        assert self.state.output.ndim == 1, "Expected scores to be one-dimensional but got shape %s" % str(tuple(self.state.output.size()))
+
+    def sample(self, scores:torch.FloatTensor, query_size:int) -> Sequence[int]:
+        """ Query samples to label using the strategy 
+        
+            Args:
+                pool (Dataset): pool of data points from which to sample
+                query_size (int): number of data points to sample from pool
+                batch_size (int): batch size used to process the pool dataset
+
+            Returns:
+                indices (Sequence[int]): indices of selected data points in pool
+        """
+        # how many samples to draw
+        k = min(scores.size(0), query_size)
+        # draw samples from output scores
+        return torch.multinomial(scores, k) if self.random_sample else scores.topk(k=k).indices

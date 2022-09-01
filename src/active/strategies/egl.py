@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import ignite.distributed as idist
 # base strategy and utils
-from .strategy import AbstractStrategy
+from .strategy import ScoreBasedStrategy
 from .utils import move_to_device
 # import transformers and others
 from transformers import PreTrainedModel
 from abc import abstractmethod
-from typing import Tuple, Sequence, Any, Union
+from typing import Tuple, Sequence, Any, Union, Optional
 
 __all__ = [
     "GoodfellowGradientNorm",
@@ -150,7 +150,7 @@ class GoodfellowGradientNorm(object):
         self.remove_hooks()
 
 
-class _EglBase(AbstractStrategy):
+class _EglBase(ScoreBasedStrategy):
     """ Abstract Base for Maximum Expected Gradient Length Sampling 
         Strategy. Assumes cross-entropy loss. Child classes must
         overwrite the abstract method `_get_hallucinated_labels`
@@ -159,14 +159,20 @@ class _EglBase(AbstractStrategy):
         Args:
             model (PreTrainedModel): 
                 transformer-based sequence classification model
+            random_sample (Optional[bool]): 
+                whether to random sample query according to distribution given by expected gradient length.
+                Defaults to False, meaning the elements with maximum expected gradient langth are selected.
     """
 
     def __init__(
         self,
-        model:PreTrainedModel
+        model:PreTrainedModel,
+        random_sample:Optional[bool] =False
     ) -> None:
         # initialize strategy
-        super(_EglBase, self).__init__()
+        super(_EglBase, self).__init__(
+            random_sample=random_sample
+        )
         # move model to available device(s)
         self.model = idist.auto_model(model)
 
@@ -237,19 +243,6 @@ class _EglBase(AbstractStrategy):
             # approximate expected gradient length
             with torch.no_grad():
                 return torch.sum(probs * gradnorm.compute(), dim=1)
-
-    def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
-        """ Get samples with maximum expected gradient length 
-        
-            Args:
-                output (torch.FloatTensor): expected gradient length of samples
-                query_size (int): number of samples to draw
-
-            Returns:
-                indices (Sequence[int]): drawn examples given by their indices in `output`
-        """
-        # get the samples with top expected gradient length
-        return output.topk(k=query_size).indices
 
 
 class EglByTopK(_EglBase):
