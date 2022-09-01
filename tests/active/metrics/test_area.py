@@ -22,20 +22,8 @@ class TestAreaUnderLearningCurve:
         area.reset()
         list(map(area.update, zip(x * 30, y)))
         valB = area.compute()
-    
-        # reset, update with all pairs defining curve
-        # and compute final metric score
-        area.reset()
-        list(map(area.update, zip(x, y * 30)))
-        valC = area.compute()
         
-        # reset, update with all pairs defining curve
-        # and compute final metric score
-        area.reset()
-        list(map(area.update, zip(x * 30, y * 30)))
-        valD = area.compute()
-        
-        assert valA == valB == valC == valD
+        assert valA == valB
 
     def test_linear(self):
         # linear sample curve
