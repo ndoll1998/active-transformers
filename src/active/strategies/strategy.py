@@ -82,6 +82,27 @@ class AbstractStrategy(Engine, ABC):
         """
         raise NotImplementedError()
 
+    def _sample(self, query_size:int, pool:Dataset) -> None:
+        """ Event Handler called on `EPOCH_COMPLETED` (Note that there is no reason
+            to run a strategy for more than one epoch). Calls the `sample` function
+            and stores the output in the `_indices` attribute of the strategy.
+            
+            This way tracked time stored in `state.times[`COMPLETED`]` incorporates
+            the processing and sampling.
+
+            Only called when engine is run by calling `query` function. Not called
+            when engine is directly executed by `run` function.
+            
+            Args:
+                query_size (int): number of data points to sample from pool
+                pool (Dataset): pool of data points from which to sample
+        """
+        # call sample function and check indices
+        indices = list(self.sample(self.output, query_size))
+        assert len(indices) == min(query_size, len(pool))
+        # set attribute
+        self._indices = indices
+        
     def query(
         self, 
         pool:Dataset,
@@ -105,12 +126,12 @@ class AbstractStrategy(Engine, ABC):
             shuffle=False,
             collate_fn=default_collate_drop_labels
         )
-        # reset output store and run the engine
-        self.output_store.reset()
-        self.run(loader)
-        # sample indices and check the number of indices
-        self._indices = list(self.sample(self.output, query_size))
-        assert len(self._indices) == min(query_size, len(pool))
+        # add sample event handler which updates the `_indices` attribute
+        handler = partial(self._sample, query_size=query_size, pool=pool)
+        with self.add_event_handler(Events.EPOCH_COMPLETED, handler):
+            # reset output store and run the engine
+            self.output_store.reset()
+            self.run(loader)
         # return the sampled indices
         return self._indices
 

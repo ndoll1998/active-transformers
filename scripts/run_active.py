@@ -293,19 +293,22 @@ if __name__ == '__main__':
         # run on test data
         test_metrics = tester.run(test_loader).metrics
         print("Test Metrics:", test_metrics)
-
-        # don't log test confusion matrix    
+        # don't log test confusion matrix
         test_metrics = test_metrics.copy()
         test_metrics.pop('cm')
+
+        # get total time spend in strategy
+        strategy_time = strategy.state.times[Events.COMPLETED.name]
+        strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
         # log all remaining metrics to weights and biases
         wandb.log(
-            data=(trainer.state.metrics | val_metrics | test_metrics),
+            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time),
             step=len(engine.train_dataset)
         )
     
         # check if there is an output to visualize
-        if loop.strategy.output is not None:
-            ax, fig = visualize_embeds(loop.strategy)
+        if strategy.output is not None:
+            ax, fig = visualize_embeds(strategy)
             ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
             # close figure
