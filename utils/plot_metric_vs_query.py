@@ -1,3 +1,4 @@
+import os
 import wandb
 import numpy as np
 import pandas as pd
@@ -7,6 +8,7 @@ from typing import Dict
 def wandb_build_metric_series(
     project:str,
     group:str,
+    strategy:str,
     metric:str,
     api:wandb.Api
 ) -> pd.DataFrame:
@@ -14,10 +16,11 @@ def wandb_build_metric_series(
     runs = api.runs(project, filters={
         'group': group,
         'state': 'finished',
+        'config.strategy': strategy
     })
 
-    # group by strategy
-    key = lambda r: r.config['strategy']
+    # group by query_size
+    key = lambda r: r.config['query_size']
     grouped_runs = groupby(sorted(runs, key=key), key=key)
 
     # build pandas series
@@ -28,48 +31,45 @@ def wandb_build_metric_series(
 
 def wandb_build_metric_table(
     project:str,
-    groups:Dict[str, str],
+    group:str,
+    strategies:Dict[str, str],
     metric:str,
     api:wandb.Api
 ) -> pd.DataFrame:
-    # build table comparing metric between strategies on different groups/datasets    
     return pd.DataFrame({
         name: wandb_build_metric_series(
             project=project,
             group=group,
+            strategy=strategy,
             metric=metric,
             api=api
-        ) for name, group in groups.items()
+        ) for name, strategy in strategies.items()
     })
 
-if __name__ == '__main__': 
+if __name__ == '__main__':
+
+    group = "swedish-ner-query-analysis-v2"
+    strategies={
+        "Entropy-Over-Max": "entropy-over-max",
+        "Avg-Entropy": "prediction-entropy",
+        "EGL": "egl-sampling",
+        "ALPS": "alps"
+    } 
 
     api = wandb.Api()
-    # build metrics dataframe
+    # load dataframe from wandb
     df = wandb_build_metric_table(
         project="ndoll/active-transformers-all-data",
-        groups={
-            "conll2003": "conll2003-v5",
-            "swedish-ner": "swedish-ner-v5",
-            "ncbi": "ncbi-v5",
-        },
-        # metric="test/Area(F)",
-        metric="test/wss",
+        group=group,
+        strategies=strategies,
+        metric="test/Area(F)",
         api=api
     )
 
     print(df)
-    print()
-    print("-" * 25, "LaTeX", "-" * 25)
-    print()
 
-    # get dataframe style member
-    # and highlight maximal values per row
-    style = df.style
-    style = style.highlight_max(axis=0, props='textbf:--rwrap;')
-    # render to latex
-    latex = style.to_latex(hrules=True)
-    
-    print()
-    print(latex)
-
+    # plot
+    ax = df.plot.line(grid=True, title="Conll2003", figsize=(8, 4))
+    # save to disk 
+    os.makedirs("plots/query_size", exist_ok=True)
+    ax.figure.savefig("plots/query_size/%s.png" % group)
