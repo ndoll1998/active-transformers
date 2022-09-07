@@ -96,6 +96,7 @@ def build_strategy(args, model):
     elif args.strategy == 'egl': return EglByTopK(model, k=3)
     elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
     elif args.strategy == 'entropy-over-max': return EntropyOverMax(model)
+    elif args.strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
 
 def attach_metrics(engine, tag):
     # create metrics
@@ -213,7 +214,7 @@ if __name__ == '__main__':
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
     # initialize wandb, project and run name are set
-    # as environment variables (see `run.sh`)
+    # as environment variables (see `experiments/run-active.sh`)
     wandb.init(config=config)
     
     # create the trainer, validater and tester
