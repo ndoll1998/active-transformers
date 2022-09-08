@@ -109,4 +109,3 @@ def concat_tensors(batch):
             return [concat_tensors(samples) for samples in transposed]
 
     raise TypeError()
-

@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 # import trainer
-from src.active.utils.engines import Trainer, Events
-from src.active.utils.schedulers import LinearWithWarmup
+from src.active.helpers.engines import Trainer, Events
+from src.active.helpers.schedulers import LinearWithWarmup
 # import others
 import pytest
 from tests.common import ClassificationModel, NamedTensorDataset

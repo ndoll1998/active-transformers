@@ -10,7 +10,7 @@ from transformers import (
     AutoModelForTokenClassification
 )
 # import trainer and evaluator engines
-from src.active.utils.engines import Trainer, Evaluator
+from src.active.helpers.engines import Trainer, Evaluator
 # import ignite
 from ignite.engine import Events
 from ignite.contrib.handlers.tqdm_logger import ProgressBar

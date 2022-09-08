@@ -8,7 +8,7 @@ from transformers import PreTrainedModel
 from sklearn.cluster._kmeans import kmeans_plusplus
 # import base and utils
 from .strategy import AbstractStrategy
-from .utils import move_to_device
+from ..utils.tensor import move_to_device
 # import others
 import warnings
 from typing import Sequence, Tuple, Any

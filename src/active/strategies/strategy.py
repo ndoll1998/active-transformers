@@ -6,7 +6,7 @@ from torch.utils.data import Dataset, DataLoader
 from ignite.engine import Engine, Events
 from ignite.handlers.stores import EpochOutputStore
 # others
-from .utils import (
+from ..utils.tensor import (
     map_tensors, 
     concat_tensors, 
     default_collate_drop_labels

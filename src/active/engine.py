@@ -5,7 +5,7 @@ from ignite.engine import Engine
 from ignite.engine.events import State, Events, EventEnum
 # others
 from .loop import ActiveLoop
-from .utils.engines import Trainer
+from .helpers.engines import Trainer
 from typing import Optional
 
 class ActiveLearningEvents(EventEnum):

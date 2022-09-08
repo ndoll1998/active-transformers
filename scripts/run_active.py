@@ -15,7 +15,7 @@ from src.active.loop import ActiveLoop
 from src.active.strategies import *
 from src.active.engine import ActiveLearningEvents, ActiveLearningEngine
 from src.active.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
-from src.active.utils.engines import Trainer, Evaluator
+from src.active.helpers.engines import Trainer, Evaluator
 # import data processor for token classification tasks
 from src.data.processor import TokenClassificationProcessor
 # import ignite
