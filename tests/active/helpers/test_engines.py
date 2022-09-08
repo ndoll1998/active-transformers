@@ -11,7 +11,12 @@ from src.active.helpers.engines import Trainer, Events
 from src.active.helpers.schedulers import LinearWithWarmup
 # import others
 import pytest
-from tests.common import ClassificationModel, NamedTensorDataset
+from tests.common import (
+    ClassificationModel,
+    ClassificationModelConfig,
+    register_classification_model, 
+    NamedTensorDataset
+)
 
 class TestTrainer:
     """ Test cases for the `Trainer` class """
@@ -29,11 +34,16 @@ class TestTrainer:
         """ Test non-incremental trainer setup, i.e. test if the model is reset
             on start of a new run.
         """
+        # register classification model in transformers AutoModel
+        # necessary because the auto-model functionality is used in
+        # the trainer to extract the encoder from the model 
+        register_classification_model()
+
         # create dataloader
         loader = self.create_random_loader(4, 2)
         
         # create model, optimizer and scheduler
-        model = ClassificationModel(2, 2)
+        model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda *_: 1.0)
 
@@ -68,11 +78,16 @@ class TestTrainer:
         """ Test incremental trainer setup, i.e. test if the model of the 
             current run matches the output model of the previous one
         """
+        # register classification model in transformers AutoModel
+        # necessary because the auto-model functionality is used in
+        # the trainer to extract the encoder from the model 
+        register_classification_model()
+        
         # create dataloader
         loader = self.create_random_loader(4, 2)
         
         # create model, optimizer and scheduler
-        model = ClassificationModel(2, 2)
+        model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lambda *_: 1.0)
 
@@ -108,8 +123,13 @@ class TestTrainer:
         """ Test if the learning rate scheduler is prepared correctly, i.e.
             is the number of training steps set
         """
+        # register classification model in transformers AutoModel
+        # necessary because the auto-model functionality is used in
+        # the trainer to extract the encoder from the model 
+        register_classification_model()
+        
         # create model, optimizer and scheduler
-        model = ClassificationModel(2, 2)
+        model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
         # catch expected warning
         with pytest.warns(UserWarning, match="Number of training steps not set!"):

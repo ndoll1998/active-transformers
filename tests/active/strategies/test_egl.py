@@ -2,7 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # import common components
-from tests.common import ClassificationModel, NamedTensorDataset
+from tests.common import (
+    ClassificationModel, 
+    ClassificationModelConfig,
+    NamedTensorDataset
+)
 # import egl strategies
 from src.active.strategies.egl import (
     EglByTopK,
@@ -19,7 +23,7 @@ class TestExpectedGradientLength:
                 - Strategy: EglByTopK
         """
         # create model and input data 
-        model = ClassificationModel(4, 2)
+        model = ClassificationModel(ClassificationModelConfig(4, 2))
         x = torch.rand(8, 4)
         # create and run strategy
         strategy = EglByTopK(model, k=3)
@@ -36,7 +40,7 @@ class TestExpectedGradientLength:
                 - Strategy: EglBySampling
         """
         # create model and input data 
-        model = ClassificationModel(4, 2)
+        model = ClassificationModel(ClassificationModelConfig(4, 2))
         x = torch.rand(8, 8, 4)
         # create and run strategy
         strategy = EglBySampling(model, k=3)

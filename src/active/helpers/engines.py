@@ -1,6 +1,7 @@
 import io
 # import torch
 import torch
+import torch.nn as nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler, LambdaLR
 from torch.utils.data import DataLoader
@@ -14,6 +15,7 @@ from ignite.handlers.checkpoint import BaseSaveHandler
 from transformers import PreTrainedModel
 # others
 from .schedulers import _TrainingStepsDependentMixin
+from ..utils.model import get_encoder_from_model
 from copy import deepcopy
 from collections import OrderedDict
 from typing import Optional
@@ -61,6 +63,15 @@ class Evaluator(Engine):
         # save model and initialize engine
         self.model = idist.auto_model(model)
         super(Evaluator, self).__init__(type(self).step)
+
+    @property
+    def unwrapped_model(self) -> PreTrainedModel:
+        """ The pure transformer model """
+        if isinstance(self.model, PreTrainedModel):
+            return self.model
+        elif isinstance(self.model, nn.DataParallel):
+            return self.model.module
+        raise ValueError("Unexpected model type: %s" % type(self.model))
 
     @torch.no_grad()
     def step(self, batch):
@@ -141,7 +152,9 @@ class Trainer(Evaluator):
         # save arguments
         self.acc_threshold = acc_threshold
         self.incremental = incremental
-
+        
+        # get model encoder
+        self.encoder = get_encoder_from_model(model)
         # save optimizer and initialize evaluator
         self.optim = idist.auto_optim(optim)
         self.scheduler = scheduler or LambdaLR(optim, lambda _: 1.0)
@@ -153,7 +166,7 @@ class Trainer(Evaluator):
         self.add_event_handler(Events.STARTED, type(self)._reset_state)
         
         # save initial checkpoint
-        self.init_model_ckpt = deepcopy(self.model.state_dict())
+        self.init_encoder_ckpt = deepcopy(self.encoder.state_dict())
         self.init_optim_ckpt = deepcopy(self.optim.state_dict())
         self.init_scheduler_ckpt = deepcopy(self.scheduler.state_dict())
         # add event handler        
@@ -243,11 +256,20 @@ class Trainer(Evaluator):
         # previous runs
         self.state.metrics.clear()
 
-    def _load_init_ckpt(self):
-        """ Event handler to load the initial checkpoints. Called on `STARTED`. """
-        if not self.incremental:
-            # reset model and optimizer states
-            self.model.load_state_dict(self.init_model_ckpt)
+    def _load_init_ckpt(self, force:bool =False):
+        """ Event handler to load the initial checkpoints. Called on `STARTED`. 
+
+            Args:
+                force (Optional[bool]): 
+                    whether to force reset the model and optimizer even if
+                    the incremental attribute is set to True.
+        """
+        if (not self.incremental) or force:
+            # reset model by first re-initializing all weights
+            # and loading the pretrained encoder afterwards
+            self.unwrapped_model.init_weights()
+            self.encoder.load_state_dict(self.init_encoder_ckpt)
+            # reset optimizer state
             self.optim.load_state_dict(self.init_optim_ckpt)
         # always reset scheduler state
         self.scheduler.load_state_dict(self.init_scheduler_ckpt)
@@ -293,12 +315,10 @@ class Trainer(Evaluator):
         )
 
     def _reset_ckpt(self):
-        """ Event handler to reset the checkpoint. Called on `EPOCH_STARTED`. """
+        """ Event handler to reset the checkpoint. Called on `STARTED`. """
         self.ckpt.reset()
 
     def _reset_stopper(self):
-        """ Event handler to reset the early stopper state.
-            Callend on `EPOCH_STARTED`.
-        """
+        """ Event handler to reset the early stopper state. Callend on `STARTED`. """
         self.stopper.best_score = None
         self.stopper.counter = 0

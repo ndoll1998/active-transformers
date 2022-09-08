@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
+from transformers import (
+    AutoModel,
+    PretrainedConfig, 
+    PreTrainedModel
+)
 from transformers.utils import ModelOutput
 from types import SimpleNamespace
 
@@ -12,18 +17,32 @@ class PseudoModel(nn.Module):
     def forward(self, **kwargs):
         return SimpleNamespace(**kwargs)
         
-
 class ClassificationModelOutput(ModelOutput):
     """ Output of classification model """
     logits: torch.FloatTensor =None
     loss: torch.FloatTensor =None
 
-class ClassificationModel(nn.Module):
+class ClassificationModelConfig(PretrainedConfig):
+    """ Config of classification model """
+
+    def __init__(self, in_features, out_features):
+        self.in_features = in_features
+        self.out_features = out_features
+
+class ClassificationModel(PreTrainedModel):
     """ Simple linear classification model used for testing """
 
-    def __init__(self, *args, **kwargs):
-        super(ClassificationModel, self).__init__()
-        self.linear = nn.Linear(*args, **kwargs)
+    config_class=ClassificationModelConfig
+
+    def __init__(self, config:ClassificationModelConfig):
+        super(ClassificationModel, self).__init__(config)
+        self.linear = nn.Linear(
+            in_features=config.in_features,
+            out_features=config.out_features
+        )
+
+    def init_weights(self):
+        pass
 
     def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None):
         # predict and compute loss
@@ -34,6 +53,10 @@ class ClassificationModel(nn.Module):
             logits=logits,
             loss=loss
         )
+
+def register_classification_model():
+    """ Register Classification Model in transformer AutoModel """
+    AutoModel.register(ClassificationModelConfig, nn.Linear)
 
 class NamedTensorDataset(TensorDataset):
     """ Helper Dataset similar to `TensorDataset` but returns dictionaries instead of tuples """
