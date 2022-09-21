@@ -16,6 +16,7 @@ from transformers import PreTrainedModel
 # others
 from .schedulers import _TrainingStepsDependentMixin
 from ..utils.model import get_encoder_from_model
+from ..utils.tensor import map_tensors, move_to_device
 from copy import deepcopy
 from collections import OrderedDict
 from typing import Optional
@@ -77,15 +78,15 @@ class Evaluator(Engine):
     def step(self, batch):
         """ Evaluation step function """
         # move to device
-        batch = {key: val.to(idist.device()) if isinstance(val, torch.Tensor) else val for key, val in batch.items()}
+        batch = move_to_device(batch, device=idist.device())
         # forward through model
         self.model.eval()
         out = self.model.forward(**batch)
-        # detach and move to cpu
-        out = {key: val.detach().cpu() if isinstance(val, torch.Tensor) else val for key, val in out.items()}
-        out['labels'] = batch['labels'].cpu()
-        # return all outputs for logging and metrics computation
-        return out
+        # pass labels through for metrics
+        if 'labels' in batch:
+            out['labels'] = batch['labels']
+        # back to cpu to clear device memory
+        return move_to_device(out, device=torch.device('cpu'))
 
     @staticmethod
     def get_logits_and_labels(out:dict):
@@ -113,6 +114,7 @@ class Evaluator(Engine):
             Returns:
                 loss (torch.Tensor): singleton tensor containing the loss value
         """
+        # average over data-parallel output if used
         return out['loss'].mean()
 
 class Trainer(Evaluator):
@@ -230,7 +232,7 @@ class Trainer(Evaluator):
     def step(self, batch):
         """ Training step function executed by the engine. """
         # move to device
-        batch = {key: val.to(idist.device()) if isinstance(val, torch.Tensor) else val for key, val in batch.items()}
+        batch = move_to_device(batch, device=idist.device())
         # forward through model and compute loss
         self.model.train()
         self.optim.zero_grad()
@@ -239,11 +241,10 @@ class Trainer(Evaluator):
         type(self).get_loss(out).backward()
         self.optim.step()
         self.scheduler.step()
+        # pass labels through
+        out['labels'] = batch['labels']
         # detach and move to cpu
-        out = {key: val.detach().cpu() if isinstance(val, torch.Tensor) else val for key, val in out.items()}
-        out['labels'] = batch['labels'].cpu()
-        # return all outputs for logging and metrics computation
-        return out
+        return map_tensors(out, fn=lambda t: t.detach().cpu())
 
     def _reset_state(self):
         """ Event handler to reset the trainer state. Called on `STARTED`. """
