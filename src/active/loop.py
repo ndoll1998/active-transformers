@@ -28,7 +28,7 @@ class ActiveLoop(object):
         # get the data points and remove them from the pool
         data = Subset(
             dataset=self.pool.dataset,
-            indices=indices
+            indices=list(indices)
         )
         self.pool.indices = list(filterfalse(
             set(indices).__contains__,
