@@ -89,7 +89,7 @@ class ActiveLearningEngine(Engine):
         self.train_data = []
         self.val_data = []
         # reset datasets on start
-        self.add_event_handler(Events.STARTED, type(self)._reset_datasets)
+        self.add_event_handler(Events.STARTED, type(self)._reset)
 
     @property
     def train_dataset(self) -> ConcatDataset:
@@ -101,10 +101,20 @@ class ActiveLearningEngine(Engine):
         """ Validation dataset"""
         return ConcatDataset(self.val_data)
 
-    def _reset_datasets(self):
-        """ Event handler to reset sampled datasets on engine start. """
+    def _reset(self):
+        """ Event handler to reset the engine, i.e. re-initialize the model,
+            reset optimizer and scheduler states and clear the sampled datasets. 
+            Called on `STARTED`.
+        """
+        # re-initialize model and reset optimizer and scheduler states
+        self.trainer._load_init_ckpt(force=True)
+        # clear datasets
         self.train_data.clear()
         self.val_data.clear()
+        # reset state
+        self.state.epoch = 0
+        self.state.iteration = 0
+        self.state.metrics.clear()
 
     def step(self, samples:Dataset):
         """ Engines step function implementing a single step of
