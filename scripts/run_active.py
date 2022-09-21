@@ -6,7 +6,6 @@ from torch.utils.data import DataLoader
 import datasets
 from transformers import (
     AutoTokenizer, 
-    AutoModel,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification
 )
@@ -16,17 +15,22 @@ from src.active.strategies import *
 from src.active.engine import ActiveLearningEvents, ActiveLearningEngine
 from src.active.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from src.active.helpers.engines import Trainer, Evaluator
+from src.active.utils.model import get_encoder_from_model
 # import data processor for token classification tasks
 from src.data.processor import TokenClassificationProcessor
 # import ignite
 from ignite.engine import Events
-from ignite.metrics import Recall, Precision, Average,Fbeta, Accuracy, ConfusionMatrix
+from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy, ConfusionMatrix
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # dimensionality reduction
 from sklearn.manifold import TSNE
 # others
 import wandb
 from matplotlib import pyplot as plt
+
+#
+# Data Preparation
+#
 
 def build_data_processor(tokenizer, dataset_info, args):
 
@@ -54,14 +58,14 @@ def build_data_processor(tokenizer, dataset_info, args):
  
 def build_data_filter(tokenizer, args):
     # filter out all examples that don't satify the minimum length
-    return lambda example: example['input_ids'].count(tokenizer.pad_token_id) > args.min_length
+    return lambda example: len(example['input_ids']) -  example['input_ids'].count(tokenizer.pad_token_id) > args.min_length
 
-def prepare_datasets(ds, processor, filter_):
+def prepare_datasets(ds, processor, filter_, load_from_cache=False):
     # process and filter datasets
     ds = {
         key: dataset \
-            .map(processor, batched=False, desc=key, load_from_cache_file=False)
-            .filter(filter_, batched=False, desc=key, load_from_cache_file=False)
+            .map(processor, batched=False, desc=key, load_from_cache_file=load_from_cache)
+            .filter(filter_, batched=False, desc=key, load_from_cache_file=load_from_cache)
         for key, dataset in ds.items()
     }
     # set data formats
@@ -73,16 +77,22 @@ def prepare_datasets(ds, processor, filter_):
 
     return ds
 
-def get_encoder_from_model(model):
-    # get encoder model class   
-    model_class = AutoModel._model_mapping.get(type(model.config), None)
-    assert model_class is not None, "Model type not registered!"
-    # find member of encoder class in model
-    for module in model.children():
-        if isinstance(module, model_class):
-            return module
-    # attribute error
-    raise AttributeError("Encoder member of class %s not found" % model_class.__name__)
+def load_and_preprocess_datasets(args, tokenizer):
+    
+    # load datasets
+    ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
+    dataset_info=next(iter(ds.values())).info
+
+    # load tokenizer and create task-specific data processor and filter
+    processor = build_data_processor(tokenizer, dataset_info, args)
+    filter_ = build_data_filter(tokenizer, args)
+
+    # prepare dataset
+    return prepare_datasets(ds, processor, filter_)
+
+#
+# Build Strategy and AL-Engine
+#
 
 def build_strategy(args, model):
     if args.strategy == 'random': return Random()
@@ -97,6 +107,62 @@ def build_strategy(args, model):
     elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
     elif args.strategy == 'entropy-over-max': return EntropyOverMax(model)
     elif args.strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
+
+def build_engine_and_loop(args, ds):
+
+    dataset_info=next(iter(ds.values())).info
+    # get number of labels in data
+    num_labels = \
+        dataset_info.features[args.label_column].num_classes if args.task == 'sequence' else \
+        dataset_info.features[args.label_column].feature.num_classes
+    
+    ModelTypes = {
+        'sequence': AutoModelForSequenceClassification,
+        'token': AutoModelForTokenClassification
+    }
+    # load model and create optimizer
+    model = ModelTypes[args.task].from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
+    optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = None
+
+    # create strategy and attach progress bar to strategy
+    strategy = build_strategy(args, model)
+
+    # create active learning loop
+    loop = ActiveLoop(
+        pool=ds['train'],
+        strategy=strategy,
+        batch_size=64,
+        query_size=args.query_size,
+        init_strategy=strategy if isinstance(strategy, Alps) else Random()
+    )
+
+    # create active learning engine
+    al_engine = ActiveLearningEngine(
+        trainer=Trainer(
+            model=model,
+            optim=optim,
+            scheduler=scheduler,
+            acc_threshold=args.acc_threshold,
+            patience=args.patience,
+            incremental=True
+        ),
+        trainer_run_kwargs=dict(
+            max_epochs=args.epochs,
+            epoch_length=args.epoch_length
+        ),
+        train_batch_size=args.batch_size,
+        eval_batch_size=64,
+        max_convergence_retries=3,
+        train_val_ratio=0.9
+    )
+
+    # return engine and loop
+    return al_engine, loop
+
+#
+# Utilities
+#
 
 def attach_metrics(engine, tag):
     # create metrics
@@ -114,8 +180,8 @@ def attach_metrics(engine, tag):
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool
-    idx = strategy.selected_indices
-    output = strategy.output
+    idx = loop.strategy.selected_indices
+    output = loop.strategy.output
     output = output if output.ndim == 2 else \
         output.reshape(-1, 1) if output.ndim == 1 else \
         output.flatten(start_dim=1)
@@ -172,44 +238,9 @@ if __name__ == '__main__':
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
-    # load datasets
-    ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
-    dataset_info=next(iter(ds.values())).info
-    
-    # get number of labels in data
-    num_labels = \
-        dataset_info.features[args.label_column].num_classes if args.task == 'sequence' else \
-        dataset_info.features[args.label_column].feature.num_classes
-
-    # load tokenizer and create task-specific data processor and filter
+    # load and preprocess datasets
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
-    processor = build_data_processor(tokenizer, dataset_info, args)
-    filter_ = build_data_filter(tokenizer, args)
-
-    # prepare dataset
-    ds = prepare_datasets(ds, processor, filter_)
-
-    ModelTypes = {
-        'sequence': AutoModelForSequenceClassification,
-        'token': AutoModelForTokenClassification
-    }
-    # load model and create optimizer
-    model = ModelTypes[args.task].from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = None
-
-    # create strategy and attach progress bar to strategy
-    strategy = build_strategy(args, model)
-    ProgressBar(ascii=True, desc='Strategy').attach(strategy)
-
-    # create active learning loop
-    loop = ActiveLoop(
-        pool=ds['train'],
-        strategy=strategy,
-        batch_size=64,
-        query_size=args.query_size,
-        init_strategy=strategy if isinstance(strategy, Alps) else Random()
-    )
+    ds = load_and_preprocess_datasets(args, tokenizer=tokenizer)
 
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
@@ -217,10 +248,16 @@ if __name__ == '__main__':
     # as environment variables (see `experiments/run-active.sh`)
     wandb.init(config=config)
     
-    # create the trainer, validater and tester
-    trainer = Trainer(model, optim, scheduler, args.acc_threshold, args.patience, incremental=True)
-    validator = Evaluator(model)
-    tester = Evaluator(model)
+    # build active learning engine
+    al_engine, loop = build_engine_and_loop(args, ds)
+    
+    # attach progress bar to strategy
+    ProgressBar(ascii=True, desc='Strategy').attach(loop.strategy)
+    
+    # get trainer and create validater and tester
+    trainer = al_engine.trainer
+    validator = Evaluator(trainer.unwrapped_model)
+    tester = Evaluator(trainer.unwrapped_model)
     # attach metrics
     attach_metrics(trainer, tag="train")
     attach_metrics(validator, tag="val")
@@ -232,23 +269,10 @@ if __name__ == '__main__':
     # attach confusion matrix metric to tester
     # needed for some active learning metrics
     ConfusionMatrix(
-        num_classes=model.config.num_labels,
+        num_classes=trainer.unwrapped_model.config.num_labels,
         output_transform=tester.get_logits_and_labels
     ).attach(tester, "cm")
-    
-    # create active learning engine
-    al_engine = ActiveLearningEngine(
-        trainer=trainer,
-        trainer_run_kwargs=dict(
-            max_epochs=args.epochs,
-            epoch_length=args.epoch_length
-        ),
-        train_batch_size=args.batch_size,
-        eval_batch_size=64,
-        max_convergence_retries=3,
-        train_val_ratio=0.9
-    )
-    
+
     @al_engine.on(Events.ITERATION_STARTED)
     def on_started(engine):
         # log active learning step
@@ -298,7 +322,7 @@ if __name__ == '__main__':
         test_metrics.pop('cm')
 
         # get total time spend in strategy
-        strategy_time = strategy.state.times[Events.COMPLETED.name]
+        strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
         strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
         # log all remaining metrics to weights and biases
         wandb.log(
@@ -307,8 +331,8 @@ if __name__ == '__main__':
         )
     
         # check if there is an output to visualize
-        if strategy.output is not None:
-            ax, fig = visualize_embeds(strategy)
+        if loop.strategy.output is not None:
+            ax, fig = visualize_embeds(loop.strategy)
             ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
             # close figure
