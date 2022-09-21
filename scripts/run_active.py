@@ -16,79 +16,22 @@ from src.active.engine import ActiveLearningEvents, ActiveLearningEngine
 from src.active.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from src.active.helpers.engines import Trainer, Evaluator
 from src.active.utils.model import get_encoder_from_model
-# import data processor for token classification tasks
-from src.data.processor import TokenClassificationProcessor
 # import ignite
 from ignite.engine import Events
-from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy, ConfusionMatrix
+from ignite.metrics import ConfusionMatrix
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # dimensionality reduction
 from sklearn.manifold import TSNE
 # others
 import wandb
 from matplotlib import pyplot as plt
+# helper functions
+from scripts.run_train import (
+    load_and_preprocess_datasets,
+    create_model_optim_scheduler,
+    attach_metrics
+)
 
-#
-# Data Preparation
-#
-
-def build_data_processor(tokenizer, dataset_info, args):
-
-    if args.task == 'sequence':
-        # tokenize inputs and carry label
-        return lambda example: tokenizer(   
-            text=example['text'],
-            max_length=args.max_length,
-            truncation=True,
-            padding='max_length',
-            return_token_type_ids=False
-        ) | {'labels': example[args.label_column]}
-
-    if args.task == 'token':
-        # create sequence tagging processor
-        return TokenClassificationProcessor(
-            tokenizer=tokenizer,
-            dataset_info=dataset_info,
-            tags_field=args.label_column,
-            max_length=args.max_length
-        )
-
-    # task not recognized
-    raise ValueError("Unknown task: %s" % args.task)
- 
-def build_data_filter(tokenizer, args):
-    # filter out all examples that don't satify the minimum length
-    return lambda example: len(example['input_ids']) -  example['input_ids'].count(tokenizer.pad_token_id) > args.min_length
-
-def prepare_datasets(ds, processor, filter_, load_from_cache=False):
-    # process and filter datasets
-    ds = {
-        key: dataset \
-            .map(processor, batched=False, desc=key, load_from_cache_file=load_from_cache)
-            .filter(filter_, batched=False, desc=key, load_from_cache_file=load_from_cache)
-        for key, dataset in ds.items()
-    }
-    # set data formats
-    for dataset in ds.values():
-        dataset.set_format(
-            type='torch',
-            columns=['input_ids', 'attention_mask', 'labels']
-        )
-
-    return ds
-
-def load_and_preprocess_datasets(args, tokenizer):
-    
-    # load datasets
-    ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
-    dataset_info=next(iter(ds.values())).info
-
-    # load tokenizer and create task-specific data processor and filter
-    processor = build_data_processor(tokenizer, dataset_info, args)
-    filter_ = build_data_filter(tokenizer, args)
-
-    # prepare dataset
-    return prepare_datasets(ds, processor, filter_)
 
 #
 # Build Strategy and AL-Engine
@@ -110,20 +53,8 @@ def build_strategy(args, model):
 
 def build_engine_and_loop(args, ds):
 
-    dataset_info=next(iter(ds.values())).info
-    # get number of labels in data
-    num_labels = \
-        dataset_info.features[args.label_column].num_classes if args.task == 'sequence' else \
-        dataset_info.features[args.label_column].feature.num_classes
-    
-    ModelTypes = {
-        'sequence': AutoModelForSequenceClassification,
-        'token': AutoModelForTokenClassification
-    }
-    # load model and create optimizer
-    model = ModelTypes[args.task].from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = None
+    # create model, optimizer and scheduler
+    model, optim, scheduler = create_model_optim_scheduler(args, ds)
 
     # create strategy and attach progress bar to strategy
     strategy = build_strategy(args, model)
@@ -161,22 +92,8 @@ def build_engine_and_loop(args, ds):
     return al_engine, loop
 
 #
-# Utilities
+# Visualization
 #
-
-def attach_metrics(engine, tag):
-    # create metrics
-    L = Average(output_transform=type(engine).get_loss)
-    A = Accuracy(output_transform=type(engine).get_logits_and_labels)
-    R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
-    P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
-    F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
-    # attach metrics
-    L.attach(engine, '%s/L' % tag)
-    A.attach(engine, '%s/A' % tag)
-    R.attach(engine, '%s/R' % tag)
-    P.attach(engine, '%s/P' % tag)
-    F.attach(engine, '%s/F' % tag)
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool

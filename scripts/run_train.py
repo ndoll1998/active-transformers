@@ -5,24 +5,119 @@ from torch.utils.data import DataLoader, random_split
 import datasets
 from transformers import (
     AutoTokenizer, 
-    AutoModel,
     AutoModelForSequenceClassification,
     AutoModelForTokenClassification
 )
 # import trainer and evaluator engines
 from src.active.helpers.engines import Trainer, Evaluator
+# import data processor for token classification tasks
+from src.data.processor import TokenClassificationProcessor
 # import ignite
 from ignite.engine import Events
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
+from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
 # others
 import wandb
-from scripts.run_active import (
-    prepare_datasets, 
-    build_data_processor, 
-    build_data_filter,
-    attach_metrics
-)
 
+#
+# Data Preparation
+#
+
+def build_data_processor(tokenizer, dataset_info, args):
+
+    if args.task == 'sequence':
+        # tokenize inputs and carry label
+        return lambda example: tokenizer(   
+            text=example['text'],
+            max_length=args.max_length,
+            truncation=True,
+            padding='max_length',
+            return_token_type_ids=False
+        ) | {'labels': example[args.label_column]}
+
+    if args.task == 'token':
+        # create sequence tagging processor
+        return TokenClassificationProcessor(
+            tokenizer=tokenizer,
+            dataset_info=dataset_info,
+            tags_field=args.label_column,
+            max_length=args.max_length
+        )
+
+    # task not recognized
+    raise ValueError("Unknown task: %s" % args.task)
+ 
+def build_data_filter(tokenizer, args):
+    # filter out all examples that don't satify the minimum length
+    return lambda example: len(example['input_ids']) -  example['input_ids'].count(tokenizer.pad_token_id) > args.min_length
+
+def prepare_datasets(ds, processor, filter_, load_from_cache=False):
+    # process and filter datasets
+    ds = {
+        key: dataset \
+            .map(processor, batched=False, desc=key, load_from_cache_file=load_from_cache)
+            .filter(filter_, batched=False, desc=key, load_from_cache_file=load_from_cache)
+        for key, dataset in ds.items()
+    }
+    # set data formats
+    for dataset in ds.values():
+        dataset.set_format(
+            type='torch',
+            columns=['input_ids', 'attention_mask', 'labels']
+        )
+
+    return ds
+
+def load_and_preprocess_datasets(args, tokenizer):
+    
+    # load datasets
+    ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
+    dataset_info=next(iter(ds.values())).info
+
+    # load tokenizer and create task-specific data processor and filter
+    processor = build_data_processor(tokenizer, dataset_info, args)
+    filter_ = build_data_filter(tokenizer, args)
+
+    # prepare dataset
+    return prepare_datasets(ds, processor, filter_)
+
+
+#
+# Model and Metrics
+#
+
+def create_model_optim_scheduler(args, ds):
+    
+    dataset_info=next(iter(ds.values())).info
+    # get number of labels in data
+    num_labels = \
+        dataset_info.features[args.label_column].num_classes if args.task == 'sequence' else \
+        dataset_info.features[args.label_column].feature.num_classes
+    
+    ModelTypes = {
+        'sequence': AutoModelForSequenceClassification,
+        'token': AutoModelForTokenClassification
+    }
+    # load model and create optimizer
+    model = ModelTypes[args.task].from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
+    optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = None
+
+    return model, optim, scheduler
+
+def attach_metrics(engine, tag):
+    # create metrics
+    L = Average(output_transform=type(engine).get_loss)
+    A = Accuracy(output_transform=type(engine).get_logits_and_labels)
+    R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
+    P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
+    F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
+    # attach metrics
+    L.attach(engine, '%s/L' % tag)
+    A.attach(engine, '%s/A' % tag)
+    R.attach(engine, '%s/R' % tag)
+    P.attach(engine, '%s/P' % tag)
+    F.attach(engine, '%s/F' % tag)
 
 if __name__ == '__main__':
     
@@ -57,21 +152,11 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
     
     # load datasets
-    ds = datasets.load_dataset(args.dataset, split={'train': 'train', 'test': 'test'})
-    dataset_info=next(iter(ds.values())).info
-    
-    # get number of labels in data
-    num_labels = \
-        dataset_info.features[args.label_column].num_classes if args.task == 'sequence' else \
-        dataset_info.features[args.label_column].feature.num_classes
-
-    # load tokenizer and create task-specific data processor and filter
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
-    processor = build_data_processor(tokenizer, dataset_info, args)
-    filter_ = build_data_filter(tokenizer, args)
-
-    # prepare dataset
-    ds = prepare_datasets(ds, processor, filter_)
+    ds = load_and_preprocess_datasets(args, tokenizer=tokenizer)
+    # load model, optimizer and scheduler
+    model, optim, scheduler = create_model_optim_scheduler(args, ds)
+    
     train_data, test_data = ds['train'], ds['test']
     # split validation dataset from train set
     train_data, val_data = random_split(train_data, [
@@ -83,15 +168,6 @@ if __name__ == '__main__':
     test_loader = DataLoader(test_data, batch_size=64, shuffle=False)
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     
-    ModelTypes = {
-        'sequence': AutoModelForSequenceClassification,
-        'token': AutoModelForTokenClassification
-    }
-    # load model and create optimizer
-    model = ModelTypes[args.task].from_pretrained(args.pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = None
-
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
     # initialize wandb, project and run name are set
