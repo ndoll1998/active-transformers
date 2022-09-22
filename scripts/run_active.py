@@ -27,10 +27,27 @@ import wandb
 from matplotlib import pyplot as plt
 # helper functions
 from scripts.run_train import (
+    add_data_args,
+    add_model_and_training_args,
     load_and_preprocess_datasets,
     create_model_optim_scheduler,
     attach_metrics
 )
+
+
+#
+# Argument Parsing
+#
+
+def add_active_learning_args(parser, group_name="Active Learning Arguments"):
+    
+    group = parser.add_argument_group(group_name)
+    # specify strategy and active learning params
+    group.add_argument("--strategy", type=str, default="random", help="Active Learning Strategy to use")
+    group.add_argument("--query-size", type=int, default=25, help="Number of data points to query from pool at each AL step")
+    group.add_argument("--steps", type=int, default=-1, help="Number of Active Learning Steps. Defaults to -1 meaning the whole dataset will be processed.")
+    # return argument group
+    return group
 
 
 #
@@ -125,29 +142,9 @@ if __name__ == '__main__':
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks using active learning.")
     # specify task and data
-    parser.add_argument("--task", type=str, default=None, choices=['sequence', 'token'], help="The learning task to solve. Either sequence or token classification.")
-    parser.add_argument("--dataset", type=str, default=None, help="The dataset to use. Sequence Classification datasets must have feature 'text'. Token Classification datasets must have feature 'tokens'.")
-    parser.add_argument("--label-column", type=str, default="label", help="Dataset column containing target labels.")
-    parser.add_argument('--min-length', type=int, default=0, help="Minimum sequence length an example must fulfill. Samples with less tokens will be filtered from the dataset.")
-    parser.add_argument("--max-length", type=int, default=64, help="Maximum length of input sequences")
-    # specify strategy and active learning params
-    parser.add_argument("--strategy", type=str, default="random", help="Active Learning Strategy to use")
-    parser.add_argument("--query-size", type=int, default=25, help="Number of data points to query from pool at each AL step")
-    parser.add_argument("--steps", type=int, default=-1, help="Number of Active Learning Steps. Defaults to -1 meaning the whole dataset will be processed.")
-    # specify model and learning hyperparameters
-    parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
-    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
-    parser.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
-    parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
-    parser.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
-    parser.add_argument("--batch-size", type=int, default=12, help="Batch size to use during training and evaluation")
-    # specify convergence criteria
-    parser.add_argument("--patience", type=int, default=5, help="Early Stopping Patience")
-    parser.add_argument("--acc-threshold", type=float, default=0.98, help="Early Stopping Accuracy Threshold")
-    # others
-    parser.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
-    parser.add_argument("--seed", type=int, default=2022, help="Random seed")
-
+    add_data_args(parser)
+    add_model_and_training_args(parser)    
+    add_active_learning_args(parser)
     # parse arguments
     args = parser.parse_args()
 

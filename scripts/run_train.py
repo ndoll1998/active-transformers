@@ -20,6 +20,42 @@ from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
 import wandb
 
 #
+# Argument Parsing
+#
+
+def add_data_args(parser, group_name="Data Arguments"):
+
+    group = parser.add_argument_group(group_name)
+    # add arguments
+    group.add_argument("--task", type=str, default='token', choices=['sequence', 'token'], help="The learning task to solve. Either sequence or token classification.")
+    group.add_argument("--dataset", type=str, default='conll2003', help="The dataset to use. Must match the `task`.")
+    group.add_argument("--label-column", type=str, default="ner_tags", help="Dataset column containing target labels.")
+    group.add_argument('--min-length', type=int, default=0, help="Minimum sequence length an example must fulfill. Samples with less tokens will be filtered from the dataset.")
+    group.add_argument("--max-length", type=int, default=32, help="Maximum length of input sequences")
+    group.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
+    # return argument group
+    return group
+
+def add_model_and_training_args(parser, group_name="Model and Training Arguments"):
+
+    group = parser.add_argument_group(group_name)
+    # specify model and learning hyperparameters
+    group.add_argument("--pretrained-ckpt", type=str, default="distilbert-base-uncased", help="The pretrained model checkpoint")
+    group.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
+    group.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
+    group.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
+    group.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
+    group.add_argument("--batch-size", type=int, default=12, help="Batch size to use during training and evaluation")
+    # specify convergence criteria
+    group.add_argument("--patience", type=int, default=5, help="Early Stopping Patience")
+    group.add_argument("--acc-threshold", type=float, default=0.98, help="Early Stopping Accuracy Threshold")
+    # others
+    group.add_argument("--seed", type=int, default=2022, help="Random seed")
+    # return argument group
+    return group
+
+
+#
 # Data Preparation
 #
 
@@ -124,25 +160,8 @@ if __name__ == '__main__':
     from argparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
-    # specify task and data
-    parser.add_argument("--task", type=str, default=None, choices=['sequence', 'token'], help="The learning task to solve. Either sequence or token classification.")
-    parser.add_argument("--dataset", type=str, default=None, help="The dataset to use. Sequence Classification datasets must have feature 'text'. Token Classification datasets must have feature 'tokens'.")
-    parser.add_argument("--label-column", type=str, default="label", help="Dataset column containing target labels.")
-    parser.add_argument('--min-length', type=int, default=0, help="Minimum sequence length an example must fulfill. Samples with less tokens will be filtered from the dataset.")
-    parser.add_argument("--max-length", type=int, default=64, help="Maximum length of input sequences")
-    # specify model and learning hyperparameters
-    parser.add_argument("--pretrained-ckpt", type=str, default="bert-base-uncased", help="The pretrained model checkpoint")
-    parser.add_argument("--lr", type=float, default=2e-5, help="Learning rate used by optimizer")
-    parser.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
-    parser.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
-    parser.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
-    parser.add_argument("--batch-size", type=int, default=12, help="Batch size to use during training and evaluation")
-    # specify convergence criteria
-    parser.add_argument("--patience", type=int, default=5, help="Early Stopping Patience")
-    parser.add_argument("--acc-threshold", type=float, default=0.98, help="Early Stopping Accuracy Threshold")
-    # others
-    parser.add_argument("--use-cache", action='store_true', help="Use cached datasets if present")
-    parser.add_argument("--seed", type=int, default=2022, help="Random seed")
+    add_data_args(parser)
+    add_model_and_training_args(parser)    
 
     # parse arguments
     args = parser.parse_args()
