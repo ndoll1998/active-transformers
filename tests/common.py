@@ -44,7 +44,7 @@ class ClassificationModel(PreTrainedModel):
     def init_weights(self):
         pass
 
-    def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None):
+    def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None, **kwargs):
         # predict and compute loss
         logits = self.linear(x)
         loss = F.cross_entropy(logits, labels) if labels is not None else None
