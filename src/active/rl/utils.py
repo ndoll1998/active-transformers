@@ -17,7 +17,8 @@ def client_run_episode(
         # apply actions and observe returns
         obs, reward, done, info = env.step(action)
         # log returns
-        client.log_returns(eid, reward, info)
+        if training_enabled:
+            client.log_returns(eid, reward, info)
 
     # end episode
     client.end_episode(eid, obs)
