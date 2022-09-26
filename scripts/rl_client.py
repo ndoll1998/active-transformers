@@ -23,6 +23,8 @@ from scripts.run_active import (
     build_engine_and_loop
 )
 
+from requests.exceptions import ConnectionError
+
 #
 # Argument Parsing
 #
@@ -32,7 +34,6 @@ def add_client_args(parser, group_name="Policy Client Arguments"):
     group = parser.add_argument_group(group_name)
     # server and client setup
     group.add_argument("--server-address", type=str, default="http://0.0.0.0:9900", help="URI to server running the policy")
-    group.add_argument("--training-disabled", action='store_true', help="Flag to run environment without training the policy")
     # return argument group
     return group
 
@@ -41,7 +42,6 @@ def add_reinforcement_learning_args(parser, group_name="Reinforcement Learning A
     group = parser.add_argument_group(group_name)
     # reinforcement learning params
     group.add_argument("--policy-pretrained-ckpt", type=str, default="distilbert-base-uncased", help="Pretrained checkpoint of the policy transformer model. Only used for tokenization.")
-    group.add_argument("--num-episodes", type=int, default=10, help="Number of episodes to run the environemnt for.")
     group.add_argument("--query-strategy", type=str, default="random", help="Strategy used for preselection of query elements from dataset. Query elements are passed to the agent for final selection.")
     # return argument group
     return group
@@ -127,25 +127,30 @@ if __name__ == '__main__':
     # create policy client
     client = PolicyClient(
         address=args.server_address,
-        inference_mode='remote', # alternatively local to pull policy model from server
+        inference_mode='remote', # or local
+        # only update policy on explicit request
         update_interval=None
     )
 
+    i = 0
     # run for n episodes
-    for i in range(args.num_episodes):
+    while True:
+        i += 1
 
-        print("RUNNING EPISODE %i" % i)
-        # run episode
-        client_run_episode(
-            env=env,
-            client=client,
-            training_enabled=not args.training_disabled
-        )
+        try:
+            # update local policy model
+            if client.local:
+                print("POLLING MODEL WEIGHTS")
+                client.update_policy_weights()
 
-        print("EPISODE COMPLETE")
-        # update model if inference mode is local
-        if client.local:
-            print("POLLING MODEL WEIGHTS")
-            client.update_policy_weights()
+            print("RUNNING EPISODE %i" % i)
+            # run episode
+            client_run_episode(
+                env=env,
+                client=client,
+                training_enabled=True
+            )
 
-    
+        except ConnectionError:
+            print("LOST CONNECTION TO POLICY INPUT SERVER!")
+            break
