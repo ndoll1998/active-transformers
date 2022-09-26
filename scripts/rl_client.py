@@ -1,18 +1,13 @@
 import torch
 import numpy as np
-# hugginface
-import datasets
-import transformers
 # import ray policy client
 import ray
 from ray.rllib.env.policy_client import PolicyClient
 # import environment and run helper
-from src.active.rl.stream.env import StreamBasedEnv
 from src.active.rl.utils import client_run_episode
 from src.active.helpers.engines import Evaluator
 from src.active.engine import ActiveLearningEvents
 # import ignite
-from ignite.engine import Events
 from ignite.metrics import Fbeta
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # import active learning setup helpers
