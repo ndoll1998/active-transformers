@@ -1,5 +1,4 @@
 import os
-import json
 import torch
 import numpy as np
 # import ray policy client
@@ -32,45 +31,10 @@ def add_evaluation_args(parser, group_name="Evaluation Arguments"):
     group = parser.add_argument_group(group_name)
     group.add_argument("--ckpt-dir", type=str, default="output/rl/", help="Directory to store policy checkpoint in if metric improved")
     group.add_argument("--episodes", type=int, default=3, help="Number of evaluation episodes to run. Each episode will have a unique seed. The final metric is averaged out.")
-    group.add_argument("--resume", action='store_true', help="Whether to resume the previous checkpoint stored in `ckpt_dir`. Alternatively the previous checkpoint will be overwritten.")
 
     # return argument group
     return group
 
-class Checkpoint(object):
-    """ Helper class to handle checkpointing over multiple calls to the script """
-
-    def __init__(self, ckpt_dir:str):
-        # checkpoint metric and history
-        self.prev_metric = float('-inf')
-        self.history = {}
-        # save checkpoint directory
-        self.ckpt_dir = ckpt_dir
-
-    def handle(self, metrics, weights):
-        
-        # add metrics to history
-        self.history[len(self.history)] = metrics 
-        # compute average metric
-        cur_metric = sum(metrics) / len(metrics)
-
-        if cur_metric > self.prev_metric:
-            # save weights
-            torch.save(weights, os.path.join(self.ckpt_dir, "model.bin"))
-            self.prev_metric = cur_metric
-
-    def load(self):
-        with open(os.path.join(self.ckpt_dir, "ckpt.json"), 'r') as f:
-            data = json.loads(f.read())
-        self.prev_metric = data['prev_metric']
-        self.history = data['history']
-
-    def save(self):
-        with open(os.path.join(self.ckpt_dir, "ckpt.json"), 'w+') as f:
-            f.write(json.dumps({
-                'prev_metric': self.prev_metric,
-                'history': self.history
-            }, indent=4))
 
 if __name__ == '__main__':
     
@@ -86,6 +50,9 @@ if __name__ == '__main__':
     
     # parse arguments
     args = parser.parse_args()
+
+    # create checkpoint directory
+    os.make_dirs(args.ckpt_dir, exists_ok=True)
     
     # build environment
     env = build_stream_based_env(args)
@@ -115,6 +82,9 @@ if __name__ == '__main__':
         job_type="eval"
     )
 
+    # keep track of current best average metric
+    cur_best_metric = float('-inf')
+
     # run evaluation forever (i.e. as long as no error is thrown)
     while True:
     
@@ -142,20 +112,19 @@ if __name__ == '__main__':
                 
                 metrics.append(env.engine.state.metrics['test/Area(F)'])
             
-            wandb.log({"test/Area(F)": sum(metrics) / len(metrics)})
+            # compute and log current average metric
+            avg_metric = sum(metrics) / len(metrics)
+            wandb.log({"test/Area(F)": avg_metric})
 
-            # load previous checkpoint if exists
-            ckpt = Checkpoint(args.ckpt_dir)
-            if args.resume and os.path.isfile(os.path.join(args.ckpt_dir, "ckpt.json")):
-                ckpt.load()
-            else:
-                # create checkpoint directory if not exists
-                os.makedirs(args.ckpt_dir, exist_ok=True)
-            
-            # handle
-            ckpt.handle(metrics, client.rollout_worker.get_weights())
-            # save checkpoint
-            ckpt.save()
+            # check if metric improved over previous best
+            if avg_metric > cur_best_metric:
+                # update metric
+                cur_best_metric = avg_metric
+                # save model parameters
+                torch.save(
+                    client.rollout_worker.get_weights(),
+                    os.path.join(args.ckpt_dir, "model.bin"),
+                )
 
         except ConnectionError:
             print("LOST CONNECTION TO POLICY INPUT SERVER!")

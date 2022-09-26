@@ -22,7 +22,7 @@ from scripts.run_active import (
     load_and_preprocess_datasets,
     build_engine_and_loop
 )
-
+# import exception
 from requests.exceptions import ConnectionError
 
 #
