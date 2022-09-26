@@ -115,7 +115,7 @@ def load_and_preprocess_datasets(args, tokenizer):
     filter_ = build_data_filter(tokenizer, args)
 
     # prepare dataset
-    return prepare_datasets(ds, processor, filter_)
+    return prepare_datasets(ds, processor, filter_, load_from_cache=args.use_cache)
 
 
 #
