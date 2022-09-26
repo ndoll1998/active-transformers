@@ -2,6 +2,7 @@ import gym
 import torch
 import numpy as np
 # ignite
+from ignite.engine import Events
 from ignite.metrics import Metric
 import ignite.distributed as idist
 # import active learning components
@@ -249,13 +250,16 @@ class StreamBasedEnv(gym.Env):
         # reset internal state
         self.state.reset()
 
-        # reset active learning engine, i.e. re-initialize
-        # model and reset optimizer and scheduler state
-        self.engine._reset()
-        
-        # create evaluator and attach metric
-        self.evaluator = Evaluator(self.engine.trainer.unwrapped_model)
-        self.metric.attach(self.evaluator, "__reward_metric")
+        # call engine started event, this resets the
+        # internals of the engine, i.e. it re-initializes
+        # the model and resets the optimizer, scheduler and state
+        self.engine._fire_event(Events.STARTED)      
+        self.engine._fire_event(Events.EPOCH_STARTED)  
+
+        # initialize evaluator and attach metric if not done before
+        if self.evaluator is None:
+            self.evaluator = Evaluator(self.engine.trainer.unwrapped_model)
+            self.metric.attach(self.evaluator, "__reward_metric")
 
         # initialize active loop which is used to gather queue
         # elements which one-by-one are passed to the policy
@@ -285,34 +289,50 @@ class StreamBasedEnv(gym.Env):
         if bool(action):
             # select current query
             self.state.select_query()
+        
+        # get next observations and check
+        # if done, i.e. budget is exhausted
+        obs = self.state.next_query()
+        done = self.state.budget_exhausted
 
-        if self.state.query_size_reached:
+        # check if queues are empty
+        if self.state.are_queues_empty and (not done):
+            # refill if so
+            done |= not self._refill_queues()
+
+        # train on selected samples
+        if self.state.query_size_reached or (done and self.state.query_index > 0):
             # need to update the iteration manually as only the step
             # function (i.e. the process function) is called
             self.engine.state.iteration += 1
+            # also call the iteration started event
+            self.engine._fire_event(Events.ITERATION_STARTED)
             # do an active learning step with the newly aquired data
             # TODO: this isn't perfect as the engine expects a torch dataset
             #       but gets a list of samples instead, but works for now
             self.engine.step(self.state.samples)
             self.state.samples.clear()
+
             # evaluate model on test data and get reward metric
             state = self.evaluator.run(self._test_data_loader)
             metric_val = state.metrics['__reward_metric']
             # compute reward and update state
             reward = metric_val - self.state.prev_metric
             self.state.prev_metric = metric_val
+            
+            # call iteration completed event
+            # note that at this point the evaluator has ran
+            # and metrics depending on the evaluator can be computed
+            self.engine._fire_event(Events.ITERATION_COMPLETED)
 
         else:
             # delayed reward
             reward = 0
         
-        # done if budget is exhausted
-        done = self.state.budget_exhausted
-
-        # check if queues are empty
-        if self.state.are_queues_empty:
-            # refill if so
-            done |= not self._refill_queues()
+        if done:
+            # call engine completed event
+            self.engine._fire_event(Events.COMPLETED)
+            self.engine._fire_event(Events.EPOCH_COMPLETED)
 
         # return observation, reward, done and info
-        return self.state.next_query(), reward, done, {}
+        return obs, reward, done, {}
