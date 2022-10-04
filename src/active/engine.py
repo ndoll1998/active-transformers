@@ -98,8 +98,13 @@ class ActiveLearningEngine(Engine):
     
     @property
     def val_dataset(self) -> ConcatDataset:
-        """ Validation dataset"""
-        return ConcatDataset(self.val_data)
+        """ Validation dataset. Fallback to train dataset if no validation
+            data is present yet.
+        """
+        if sum(map(len, self.val_data)) > 0:
+            return ConcatDataset(self.val_data)
+        else:
+            return self.train_dataset
 
     def _reset(self):
         """ Event handler to reset the engine, i.e. re-initialize the model,
@@ -123,14 +128,17 @@ class ActiveLearningEngine(Engine):
             Args:
                 samples (Dataset): samples selected for the active learning step
         """
+        # make sure samples are valid
+        assert len(samples) > 0, "No samples provided!"
+        # compute number of elements per split
+        # make sure to prefer train data, i.e. if there are not enough samples
+        # provided to populate both then only populate the train set
+        n_train = len(samples) - int(len(samples) * (1.0 - self.train_val_ratio))
+        n_val = len(samples) - n_train
         # split into train and validation samples
-        train_samples, val_samples = random_split(
-            samples, [
-                int(len(samples) * self.train_val_ratio),
-                len(samples) - int(len(samples) * self.train_val_ratio)
-            ]
-        )
-        # create datasets
+        train_samples, val_samples = random_split(samples, [n_train, n_val])
+        
+        # add to the respective datasets
         self.train_data.append(train_samples)
         self.val_data.append(val_samples)
 
