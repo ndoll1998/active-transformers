@@ -1,9 +1,21 @@
 import torch
 from torch import Tensor
-from torch.utils.data import default_collate
+from torch.utils.data import TensorDataset, default_collate
 # typing
 import collections
 from typing import Union, Any, Sequence, Dict, Callable
+
+class NamedTensorDataset(TensorDataset):
+    """ Dataset similar to `TensorDataset` but returns takes named tensors
+        as keyword arguments and yields dictionaries instead of tuples.
+    """
+
+    def __init__(self, **named_tensors) -> None:
+        self.names, tensors = zip(*named_tensors.items())
+        super(NamedTensorDataset, self).__init__(*tensors)
+    def __getitem__(self, idx) -> dict:
+        tensors = super(NamedTensorDataset, self).__getitem__(idx)
+        return dict(zip(self.names, tensors))
 
 def default_collate_drop_labels(batch:Any) -> Any:
     # collate batch

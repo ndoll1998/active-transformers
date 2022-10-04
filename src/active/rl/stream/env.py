@@ -11,11 +11,15 @@ from src.active.engine import ActiveLearningEngine
 from src.active.helpers.engines import Evaluator
 from src.active.strategies import AbstractStrategy, Random
 # import data utilities
-from src.active.utils.tensor import default_collate_drop_labels
+from src.active.utils.tensor import (
+    NamedTensorDataset,
+    default_collate_drop_labels
+)
 from torch.utils.data import (
     Subset, 
-    Dataset, 
-    DataLoader
+    Dataset,
+    DataLoader,
+    default_collate
 )
 # others
 from itertools import chain
@@ -301,17 +305,21 @@ class StreamBasedEnv(gym.Env):
             done |= not self._refill_queues()
 
         # train on selected samples
-        if self.state.query_size_reached or (done and self.state.query_index > 0):
+        if self.state.query_size_reached or (done and (self.state.query_index > 0)):
             # need to update the iteration manually as only the step
             # function (i.e. the process function) is called
             self.engine.state.iteration += 1
             # also call the iteration started event
             self.engine._fire_event(Events.ITERATION_STARTED)
-            # do an active learning step with the newly aquired data
-            # TODO: this isn't perfect as the engine expects a torch dataset
-            #       but gets a list of samples instead, but works for now
-            self.engine.step(self.state.samples)
+            
+            # create dataset from aquired data
+            samples = default_collate(self.state.samples)
+            samples = NamedTensorDataset(**samples)
+            # clear samples in state
             self.state.samples.clear()
+
+            # do an active learning step with the newly aquired data
+            self.engine.step(samples)
 
             # evaluate model on test data and get reward metric
             state = self.evaluator.run(self._test_data_loader)
