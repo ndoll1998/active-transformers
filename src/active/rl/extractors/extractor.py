@@ -15,6 +15,6 @@ class FeatureExtractor(ABC, Module):
 
     @property
     @abstractmethod
-    def feature_dim(self) -> int:
+    def feature_size(self) -> int:
         """ Dimension of the extracted features """
         raise NotImplementedError()

@@ -17,7 +17,7 @@ class TransformerFeatureExtractor(FeatureExtractor):
         self.encoder = transformers.AutoModel.from_pretrained(pretrained_ckpt)
 
     @property
-    def feature_dim(self) -> int:
+    def feature_size(self) -> int:
         return self.encoder.config.hidden_size
 
     def forward(self, input_dict) -> torch.Tensor:
@@ -30,11 +30,6 @@ class TransformerFeatureExtractor(FeatureExtractor):
         # execution also this should make sense as the first token
         # should always be the initial [CLS]
         attention_mask[:, 0] = 1
-
-        # handle invalid attention mask
-        # this seems to occur when checking the environment
-        #if not obs['attention_mask'].any():
-        #    return torch.zeros((obs['attention_mask'].size(0), self.feature_dim))
 
         # pass through transformer
         out = self.encoder(
