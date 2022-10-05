@@ -16,7 +16,7 @@ from transformers import PreTrainedModel
 # others
 from .schedulers import _TrainingStepsDependentMixin
 from ..utils.model import get_encoder_from_model
-from ..utils.tensor import map_tensors, move_to_device
+from ..utils.data import map_tensors, move_to_device
 from copy import deepcopy
 from collections import OrderedDict
 from typing import Optional

@@ -10,7 +10,7 @@ from src.active.strategies import Random
 from src.active.helpers.engines import Evaluator, Trainer
 from src.active.engine import ActiveLearningEngine
 from src.active.rl.stream.env import StreamBasedEnv
-from src.active.utils.tensor import NamedTensorDataset
+from src.active.utils.data import NamedTensorDataset
 # import simple model for testing
 from tests.common import (
     ClassificationModel,

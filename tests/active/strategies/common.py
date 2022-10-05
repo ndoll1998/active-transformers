@@ -2,7 +2,7 @@
 from src.active.loop import ActiveLoop
 from src.active.strategies.strategy import AbstractStrategy
 # import utils and stuff
-from src.active.utils.tensor import NamedTensorDataset
+from src.active.utils.data import NamedTensorDataset
 from typing import List, Optional
 
 def _test_strategy_behavior( 

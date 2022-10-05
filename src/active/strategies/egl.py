@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import ignite.distributed as idist
 # base strategy and utils
 from .strategy import ScoreBasedStrategy
-from ..utils.tensor import move_to_device
+from ..utils.data import move_to_device
 from ..utils.gradnorm import GoodfellowGradientNorm
 from ..utils.sequence import topk_sequences
 # import transformers and others

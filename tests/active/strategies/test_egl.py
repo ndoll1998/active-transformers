@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+# import data helpers
+from src.active.utils.data import NamedTensorDataset
 # import common components
 from tests.common import (
     ClassificationModel, 
@@ -11,8 +13,6 @@ from src.active.strategies.egl import (
     EglByTopK,
     EglBySampling
 )
-
-from src.active.utils.tensor import NamedTensorDataset
 
 class TestExpectedGradientLength:
     """ Test cases for Expected Gradient Length """

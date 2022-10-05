@@ -11,7 +11,7 @@ from src.active.engine import ActiveLearningEngine
 from src.active.helpers.engines import Evaluator
 from src.active.strategies import AbstractStrategy, Random
 # import data utilities
-from src.active.utils.tensor import (
+from src.active.utils.data import (
     NamedTensorDataset,
     default_collate_drop_labels
 )

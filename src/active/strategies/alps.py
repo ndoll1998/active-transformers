@@ -15,7 +15,7 @@ from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 # import base class and more
 from .strategy import AbstractStrategy
-from ..utils.tensor import move_to_device
+from ..utils.data import move_to_device
 from typing import Sequence, Any, Optional
 
 class Alps(AbstractStrategy):

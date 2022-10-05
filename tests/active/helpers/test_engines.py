@@ -12,7 +12,7 @@ from src.active.helpers.schedulers import LinearWithWarmup
 
 # import others
 import pytest
-from src.active.utils.tensor import NamedTensorDataset
+from src.active.utils.data import NamedTensorDataset
 from tests.common import (
     ClassificationModel,
     ClassificationModelConfig,
