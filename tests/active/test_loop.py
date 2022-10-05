@@ -5,11 +5,13 @@ from src.active.loop import ActiveLoop
 from src.active.strategies.random import Random
 # import helpers
 from src.active.utils.data import NamedTensorDataset
+import pytest
 
 class TestActiveLoop:
     """ Test cases for the `ActiveLoop` class """    
 
-    def test_unique_sampling(self):
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_unique_sampling(self, exec_number):
         """ Test if the samples selected by the active loop are unique, i.e.
             each data point in the pool is chosen at most once.
         """

@@ -1,3 +1,4 @@
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,7 +8,8 @@ from src.active.utils.gradnorm import GoodfellowGradientNorm
 class TestGoodfellowGradientNorm:
     """ Test cases for Goodfellow Gradient Norm """
 
-    def test_goodfellow_grad_norm(self):
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_goodfellow_grad_norm(self, exec_number):
         """ Test Gradient Norm Computation using Goodfellow """        
         # create sample model with linear components
         model = nn.Sequential(
@@ -40,7 +42,8 @@ class TestGoodfellowGradientNorm:
                 manual_norm = sum((p.grad * p.grad).sum() for n, p in model.named_parameters())
                 assert torch.allclose(manual_norm, goodfellow_norm[i]), "%.04f != %.04f" % (manual_norm, goodfellow_norm[i])
     
-    def test_goodfellow_grad_norm_multiple_backward_passes(self):
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_goodfellow_grad_norm_multiple_backward_passes(self, exec_number):
         """ Test multi-backward pass of Goodfellow Norm Computation """
         # create sample model with linear components
         model = nn.Sequential(

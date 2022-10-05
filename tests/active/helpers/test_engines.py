@@ -31,7 +31,8 @@ class TestTrainer:
         # train dataloader
         return DataLoader(dataset, batch_size=2, shuffle=True)
 
-    def test_non_incremental_trainer(self):
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_non_incremental_trainer(self, exec_number):
         """ Test non-incremental trainer setup, i.e. test if the model is reset
             on start of a new run.
         """
@@ -75,7 +76,8 @@ class TestTrainer:
         for _ in range(2):
             trainer.run(loader, max_epochs=2)
 
-    def test_incremental_trainer(self):
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_incremental_trainer(self, exec_number):
         """ Test incremental trainer setup, i.e. test if the model of the 
             current run matches the output model of the previous one
         """

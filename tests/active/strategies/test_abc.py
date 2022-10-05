@@ -1,3 +1,4 @@
+import pytest
 import torch
 from torch.utils.data import TensorDataset
 from src.active.strategies.strategy import (
@@ -21,7 +22,9 @@ class TestAbstractStrategy():
             batch_size=2
         )
 
-    def test_score_based_strategy_sampling(self):
+
+    @pytest.mark.parametrize('exec_number', range(10))
+    def test_score_based_strategy_sampling(self, exec_number):
         """ Test score-based strategy with random sampling"""        
 
         class Strategy(ScoreBasedStrategy):
@@ -31,13 +34,11 @@ class TestAbstractStrategy():
         strategy = Strategy(random_sample=True)
         pool = torch.FloatTensor([0, 0, 0.5, 0.6, 0, 0.9])
 
-        # since this is non-deterministic, test expectation a few times        
-        for _ in range(10):
-            # query
-            idx = strategy.query(
-                TensorDataset(pool), 
-                query_size=2, 
-                batch_size=2
-            )
-            # check expectation
-            assert all(i.item() in {2, 3, 5} for i in idx)
+        # query
+        idx = strategy.query(
+            TensorDataset(pool), 
+            query_size=2, 
+            batch_size=2
+        )
+        # check expectation
+        assert all(i.item() in {2, 3, 5} for i in idx)

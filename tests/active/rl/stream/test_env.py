@@ -3,6 +3,7 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import torch
+import pytest
 # import reward metric
 from ignite.metrics import Fbeta
 # import active learning components
@@ -74,7 +75,8 @@ class TestStreamBasedEnv:
             max_num_labels=2
         )
     
-    def test_run_until_pool_exhausted(self):
+    @pytest.mark.parametrize('exec_number', range(10))
+    def test_run_until_pool_exhausted(self, exec_number):
  
         # create sample environment
         env = self.create_sample_env(
@@ -96,25 +98,23 @@ class TestStreamBasedEnv:
         _, _, done, _ = env.step(env.action_space.sample())
         assert done, "Environment should be done as pool should be exhausted"
     
-    def test_reward_system(self):
+    @pytest.mark.parametrize('exec_number', range(10))
+    def test_reward_system(self, exec_number):
 
         # create sample environment
         env = self.create_sample_env()
 
-        # test env for multiple runs/episodes
-        for _ in range(10):
+        # reset env
+        env.reset()
 
-            # reset env
-            env.reset()
+        rewards = []
+        # run a full episode and track rewards
+        done = False
+        while not done:
+            _, r, done, _ = env.step(env.action_space.sample())
+            rewards.append(r)
 
-            rewards = []
-            # run a full episode and track rewards
-            done = False
-            while not done:
-                _, r, done, _ = env.step(env.action_space.sample())
-                rewards.append(r)
-
-            # get final metric value after episode
-            final_metric = env.state.prev_metric
-            # check reward sum
-            assert sum(rewards) == final_metric, "Rewards of an episode must sum up to the final reward metric!"
+        # get final metric value after episode
+        final_metric = env.state.prev_metric
+        # check reward sum
+        assert sum(rewards) == final_metric, "Rewards of an episode must sum up to the final reward metric!"
