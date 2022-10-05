@@ -11,7 +11,7 @@ from src.active.rl.stream.env import StreamBasedEnv
 from src.active.rl.stream.model import DQNModel
 from src.active.rl.extractors.transformer import TransformerFeatureExtractor
 # import argument constructors
-from scripts.rl.ppo_server import (
+from src.scripts.rl.ppo_server import (
     add_server_args, 
     add_policy_args
 )

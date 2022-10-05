@@ -33,6 +33,8 @@
             Defaults to 32.
         STRATEGIES:
             Specify the Active Learning Strategies to apply.
+        WANDB_MODE:
+            weights and biases logging mode. Defaults to online.
         OVERWRITE_MIN_LENGTH: overwrite minimum sequence length set in configuration file.
         OVERWRITE_MAX_LENGTH: overwrite maximum sequence length set in confuguration file.
         OVERWRITE_LR: overwrite learning rate set in configuration file
@@ -68,7 +70,7 @@ QUERY_SIZE=${QUERY_SIZE:-32}
 # set default random group id if not set
 GROUP_ID=${GROUP_ID:-$(cat /proc/sys/kernel/random/uuid | head -c 8)}
 # set up weights and biases
-export WANDB_MODE="online"
+export WANDB_MODE=${WANDB_MODE:-"online"}
 export WANDB_PROJECT="active-transformers-all-data"
 export WANDB_RUN_GROUP="$EXPERIMENT-$GROUP_ID"
 
@@ -85,7 +87,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
         export WANDB_NAME="$EXPERIMENT-$STRATEGY-$SEED"
 
         # run training
-        python scripts/run_active.py \
+        python src/scripts/run_active.py \
             --task $TASK \
             --dataset $DATASET \
             --label-column $LABEL \

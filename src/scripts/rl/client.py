@@ -14,7 +14,7 @@ from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # transformers tokenizer
 from transformers import AutoTokenizer
 # import active learning setup helpers
-from scripts.run_active import (
+from src.scripts.run_active import (
     add_data_args,
     add_model_and_training_args,
     load_and_preprocess_datasets,

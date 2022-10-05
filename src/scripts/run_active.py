@@ -26,7 +26,7 @@ from sklearn.manifold import TSNE
 import wandb
 from matplotlib import pyplot as plt
 # helper functions
-from scripts.run_train import (
+from src.scripts.run_train import (
     add_data_args,
     add_model_and_training_args,
     load_and_preprocess_datasets,

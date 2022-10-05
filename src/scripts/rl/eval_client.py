@@ -8,13 +8,13 @@ from ray.rllib.env.policy_client import PolicyClient
 from src.active.rl.utils import client_run_episode
 from src.active.metrics import AreaUnderLearningCurve
 # import active learning setup helpers
-from scripts.run_active import (
+from src.scripts.run_active import (
     add_data_args,
     add_model_and_training_args,
     load_and_preprocess_datasets,
     build_engine_and_loop
 )
-from scripts.rl.client import (
+from src.scripts.rl.client import (
     add_client_args,
     add_reinforcement_learning_args,
     add_active_learning_args,

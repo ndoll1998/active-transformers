@@ -29,7 +29,7 @@ for SEED in 2567556381 20884829 1872321349 3003095696 72456076; do
     export WANDB_NAME="$EXPERIMENT-$STRATEGY-$SEED"
 
     # run training
-    python scripts/run_train.py \
+    python src/scripts/run_train.py \
         --task $TASK \
         --dataset $DATASET \
         --label-column $LABEL \
