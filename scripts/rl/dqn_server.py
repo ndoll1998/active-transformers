@@ -1,49 +1,26 @@
+import torch
 # import ray
 import ray
 from ray.tune import Tuner
 from ray.air import RunConfig
 from ray.air.callbacks.wandb import WandbLoggerCallback
 from ray.rllib.env.policy_server_input import PolicyServerInput
-from ray.rllib.algorithms.ppo import PPO
+from ray.rllib.algorithms.dqn import DQN
 # import environment and model components
 from src.active.rl.stream.env import StreamBasedEnv
-from src.active.rl.stream.model import StreamBasedModel
+from src.active.rl.stream.model import DQNModel
 from src.active.rl.extractors.transformer import TransformerFeatureExtractor
-
-#
-# Argument Parsing
-#
-
-def add_server_args(parser, group_name="Policy Server Arguments"):
-
-    group = parser.add_argument_group(group_name)
-    # server setup
-    group.add_argument("--address", type=str, default="0.0.0.0", help="Host address of the policy server")
-    group.add_argument("--port", type=int, default=9900, help="Base port for clients to connect to. Available ports are (port + worker_id - 1)")
-    group.add_argument("--num-workers", type=int, default=1, help="Number of workers, that is maximum number of clients that can connect simultaneously.")
-    # return argument group
-    return group
-
-def add_policy_args(parser, group_name="Policy Arguments"):
-    
-    group = parser.add_argument_group(group_name)
-    # policy training arguments
-    group.add_argument("--policy-batch-size", type=int, default=32, help="Batch size used to train policy model.")
-    group.add_argument("--rollout-size", type=int, default=128, help="Size of the rollout buffer, i.e. number of steps used to train the policy model with.")
-    group.add_argument("--timesteps", type=int, default=2048, help="Total number of timesteps to train the policy model for")
-    # policy and model setup
-    group.add_argument("--policy-pretrained-ckpt", type=str, default="distilbert-base-uncased", help="Pretrained Transformer model of the policy feature extractor")
-    group.add_argument("--policy-sequence-length", type=int, default=32, help="Length of inputs for the policy transformer model. Needed to construct observation space.")
-    group.add_argument("--model-sequence-length", type=int, default=32, help="Length of inputs for the prediction transformer model. Needed to construct observation space.")
-    group.add_argument("--model-num-labels", type=int, default=9, help="Number of predicted labels (per token). Needed to construct observation space.")
-    # return argument group
-    return group
+# import argument constructors
+from scripts.rl.ppo_server import (
+    add_server_args, 
+    add_policy_args
+)
 
 
 if __name__ == '__main__':
 
     from argparse import ArgumentParser
-    parser = ArgumentParser(description="Start a server providing the policy for connected clients")
+    parser = ArgumentParser(description="Start a DQN server providing the policy for connected clients")
     add_server_args(parser)
     add_policy_args(parser)
     # parse arguments
@@ -93,27 +70,31 @@ if __name__ == '__main__':
         # disable off-policy estimation (OPE) as rollouts
         # are coming from clients which doens't allow off-policy
         off_policy_estimation_methods={},
+        
         # algorithm parameters
         rollout_fragment_length=args.rollout_size,
         train_batch_size=args.policy_batch_size,
-        sgd_minibatch_size=args.policy_batch_size,
+
         # specify the policy model
         model=dict(
-            custom_model=StreamBasedModel,
+            # specify custom model
+            custom_model=DQNModel,
             custom_model_config=dict(
                 feature_extractor_type=TransformerFeatureExtractor,
                 feature_extractor_config=dict(
                     pretrained_ckpt=args.policy_pretrained_ckpt
-                )
+                ),
             )
         ),
+        # learning rate
+        lr=2e-5,
         # log level
         log_level="INFO",
     )
 
     # run tuner, i.e. train policy
     Tuner(
-        PPO,
+        DQN,
         param_space=config,
         run_config=RunConfig(
             # stop config

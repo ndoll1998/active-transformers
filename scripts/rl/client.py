@@ -3,13 +3,16 @@ import numpy as np
 # import ray policy client
 import ray
 from ray.rllib.env.policy_client import PolicyClient
-# import environment and run helper
+# import environment and active learning components
+from src.active.rl.stream.env import StreamBasedEnv
 from src.active.rl.utils import client_run_episode
 from src.active.helpers.engines import Evaluator
 from src.active.engine import ActiveLearningEvents
 # import ignite
 from ignite.metrics import Fbeta
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
+# transformers tokenizer
+from transformers import AutoTokenizer
 # import active learning setup helpers
 from scripts.run_active import (
     add_data_args,
@@ -67,7 +70,7 @@ def build_stream_based_env(args):
     assert args.pretrained_ckpt == args.policy_pretrained_ckpt, "Preprocessing not implemented yet!"
     # load and preprocess datasets
     # TODO: what if policy and model need different tokenization
-    tokenizer = transformers.AutoTokenizer.from_pretrained(args.pretrained_ckpt)
+    tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
     ds = load_and_preprocess_datasets(args, tokenizer=tokenizer)
     # build active learning engine
     al_engine, loop = build_engine_and_loop(args, ds)
@@ -118,6 +121,8 @@ if __name__ == '__main__':
 
     # build environment
     env = build_stream_based_env(args)
+
+    env.engine.max_convergence_retries=1
 
     # create policy client
     client = PolicyClient(

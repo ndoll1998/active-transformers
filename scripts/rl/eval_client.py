@@ -14,7 +14,7 @@ from scripts.run_active import (
     load_and_preprocess_datasets,
     build_engine_and_loop
 )
-from scripts.rl_client import (
+from scripts.rl.client import (
     add_client_args,
     add_reinforcement_learning_args,
     add_active_learning_args,
@@ -52,7 +52,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # create checkpoint directory
-    os.make_dirs(args.ckpt_dir, exists_ok=True)
+    os.makedirs(args.ckpt_dir, exist_ok=True)
     
     # build environment
     env = build_stream_based_env(args)
@@ -76,9 +76,10 @@ if __name__ == '__main__':
     )
 
     # create a wandb run for each evaluation episode
+    # TODO: don't hardcode group (at best don't hardcode any of these)
     run = wandb.init(
         project="rl-active-learning",
-        group="PPO",
+        group="DQN",
         job_type="eval"
     )
 
@@ -130,6 +131,5 @@ if __name__ == '__main__':
             print("LOST CONNECTION TO POLICY INPUT SERVER!")
             break
 
-    # finish weights and biases runs
-    for run in runs:
-        run.finish()
+    # finish run
+    run.finish()
