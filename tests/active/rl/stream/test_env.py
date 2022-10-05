@@ -3,39 +3,44 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import torch
-
+# import reward metric
 from ignite.metrics import Fbeta
-
+# import active learning components
 from src.active.strategies import Random
 from src.active.helpers.engines import Evaluator, Trainer
 from src.active.engine import ActiveLearningEngine
 from src.active.rl.stream.env import StreamBasedEnv
-
+from src.active.utils.tensor import NamedTensorDataset
+# import simple model for testing
 from tests.common import (
     ClassificationModel,
     ClassificationModelConfig,
-    register_classification_model, 
-    NamedTensorDataset
+    register_classification_model 
 )
 
 class TestStreamBasedEnv:
     """ Test cases for the `StreamBasedEnv` """
 
-    def test_reward_system(self):
-
+    def create_sample_env(
+        self,
+        pool_size:int =100,
+        budget:int =10,
+        query_size:int =2,
+    ) -> StreamBasedEnv:
+        
         # register classification model    
         register_classification_model() 
 
         # create random dataset
         dataset = NamedTensorDataset(
             # actual input to classification model
-            x=torch.rand(100, 2),
+            x=torch.rand(pool_size, 2),
             # needed for environment
-            input_ids=torch.randint(0, 100, size=(100, 1)),
-            attention_mask=torch.ones((100, 1), dtype=bool),
-            # needed for envornment but also used
+            input_ids=torch.randint(0, 100, size=(pool_size, 1)),
+            attention_mask=torch.ones((pool_size, 1), dtype=bool),
+            # needed for environment but also used
             # for training classification model
-            labels=torch.randint(0, 2, size=(100,))
+            labels=torch.randint(0, 2, size=(pool_size,))
         )
 
         # create model and optimizer
@@ -51,9 +56,9 @@ class TestStreamBasedEnv:
         )
 
         # create env
-        env = StreamBasedEnv(
-            budget=10,
-            query_size=2,
+        return StreamBasedEnv(
+            budget=budget,
+            query_size=query_size,
             # AL engine and reward metric
             engine=engine,
             metric=Fbeta(beta=1.0, output_transform=Evaluator.get_logits_and_labels),
@@ -68,6 +73,33 @@ class TestStreamBasedEnv:
             model_sequence_length=1,
             max_num_labels=2
         )
+    
+    def test_run_until_pool_exhausted(self):
+ 
+        # create sample environment
+        env = self.create_sample_env(
+            pool_size=64,
+            budget=100,    # don't stop env based on budget but only on pool exhausted
+            query_size=16
+        )
+
+        # reset environment
+        env.reset()
+
+        # start at 1 as first pool item is already consumed by reset
+        # stop one early last step is done seperately outside of loop
+        for _ in range(1, 64 - 1):
+            _, _, done, _ = env.step(env.action_space.sample())
+            assert not done, "Environment reported to be done unexpectedly"
+
+        # should be done as pool is exhaused
+        _, _, done, _ = env.step(env.action_space.sample())
+        assert done, "Environment should be done as pool should be exhausted"
+    
+    def test_reward_system(self):
+
+        # create sample environment
+        env = self.create_sample_env()
 
         # test env for multiple runs/episodes
         for _ in range(10):
