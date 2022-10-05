@@ -5,7 +5,8 @@ from src.active.strategies.uncertainty import (
     PredictionEntropy
 )
 # import utils
-from tests.common import PseudoModel, NamedTensorDataset
+from src.active.utils.tensor import NamedTensorDataset
+from tests.common import PseudoModel
 from tests.active.strategies.common import _test_strategy_behavior
 
 class TestUncertaintyStrategies:

@@ -57,13 +57,3 @@ class ClassificationModel(PreTrainedModel):
 def register_classification_model():
     """ Register Classification Model in transformer AutoModel """
     AutoModel.register(ClassificationModelConfig, nn.Linear)
-
-class NamedTensorDataset(TensorDataset):
-    """ Helper Dataset similar to `TensorDataset` but returns dictionaries instead of tuples """
-
-    def __init__(self, **named_tensors) -> None:
-        self.names, tensors = zip(*named_tensors.items())
-        super(NamedTensorDataset, self).__init__(*tensors)
-    def __getitem__(self, idx) -> dict:
-        tensors = super(NamedTensorDataset, self).__getitem__(idx)
-        return dict(zip(self.names, tensors))

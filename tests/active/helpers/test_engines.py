@@ -9,13 +9,14 @@ from torch.utils.data import DataLoader
 # import trainer
 from src.active.helpers.engines import Trainer, Events
 from src.active.helpers.schedulers import LinearWithWarmup
+
 # import others
 import pytest
+from src.active.utils.tensor import NamedTensorDataset
 from tests.common import (
     ClassificationModel,
     ClassificationModelConfig,
     register_classification_model, 
-    NamedTensorDataset
 )
 
 class TestTrainer:

@@ -5,13 +5,14 @@ import torch.nn.functional as F
 from tests.common import (
     ClassificationModel, 
     ClassificationModelConfig,
-    NamedTensorDataset
 )
 # import egl strategies
 from src.active.strategies.egl import (
     EglByTopK,
     EglBySampling
 )
+
+from src.active.utils.tensor import NamedTensorDataset
 
 class TestExpectedGradientLength:
     """ Test cases for Expected Gradient Length """

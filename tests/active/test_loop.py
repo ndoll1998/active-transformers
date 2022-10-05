@@ -4,7 +4,7 @@ from torch.utils.data import Subset
 from src.active.loop import ActiveLoop
 from src.active.strategies.random import Random
 # import helpers
-from tests.common import NamedTensorDataset
+from src.active.utils.tensor import NamedTensorDataset
 
 class TestActiveLoop:
     """ Test cases for the `ActiveLoop` class """    
