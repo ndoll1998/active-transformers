@@ -63,9 +63,10 @@ def build_strategy(args, model):
     elif args.strategy == 'badge' and args.task == 'token':
         return BadgeForTokenClassification(get_encoder_from_model(model), model.classifier)
     elif args.strategy == 'alps': return AlpsConstantEmbeddings(model, mlm_prob=0.15)
-    elif args.strategy == 'egl': return EglByTopK(model, k=3)
-    elif args.strategy == 'egl-sampling': return EglBySampling(model, k=5)
+    elif args.strategy == 'egl': return EglByTopK(model, k=5)
+    elif args.strategy == 'egl-sampling': return EglBySampling(model, k=8)
     elif args.strategy == 'entropy-over-max': return EntropyOverMax(model)
+    elif args.strategy == 'entropy-over-max-ignore': return EntropyOverMax(model, ignore_labels=[0])
     elif args.strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
 
 def build_engine_and_loop(args, ds):
