@@ -106,8 +106,8 @@ if __name__ == '__main__':
         # specify the policy model
         model=dict(
             # specify custom model
-            # custom_model=ActorCritic,
-            custom_model=RecurrentActorCritic,
+            # custom_model=ActorCriticModel,
+            custom_model=RecurrentActorCriticModel,
             custom_model_config=dict(
                 feature_extractor_type=TransformerFeatureExtractor,
                 feature_extractor_config=dict(
