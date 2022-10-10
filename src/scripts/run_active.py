@@ -98,11 +98,11 @@ def build_engine_and_loop(args, ds):
         ),
         trainer_run_kwargs=dict(
             max_epochs=args.epochs,
-            epoch_length=args.epoch_length
+            epoch_length=args.epoch_length,
+            min_epoch_length=args.min_epoch_length
         ),
         train_batch_size=args.batch_size,
         eval_batch_size=64,
-        max_convergence_retries=3,
         train_val_ratio=0.9
     )
 
@@ -213,15 +213,13 @@ if __name__ == '__main__':
         with open(os.path.join(path, "step-%i.txt" % len(engine.train_dataset)), 'w+') as f:
             f.write('\n'.join(texts))
 
-    @al_engine.on(ActiveLearningEvents.CONVERGED | ActiveLearningEvents.CONVERGENCE_RETRY_COMPLETED)
-    def on_converged(engine):
-        print(
-            "Training Converged:", engine.trainer.converged, 
-            "Train F-Score: %.03f" % trainer.state.metrics['train/F']
-        )
-
     @al_engine.on(Events.ITERATION_COMPLETED)
     def evaluate_and_log(engine):
+        # print
+        print(
+            "Training Converged:", trainer.converged, 
+            "Train F-Score: %.03f" % trainer.state.metrics['train/F']
+        )
         # create validation and test dataloaders
         val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
         test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)

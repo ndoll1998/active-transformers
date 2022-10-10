@@ -20,18 +20,8 @@ class ActiveLearningEvents(EventEnum):
             DATA_SAMPLING_COMPLETE: 
                 called after data is sampled and split into training and validation.
                 The `engine.training_data` and `engine.validation_data` are up to date.
-            CONVERGENCE_RETRY_STARTED: called on start of model training
-            CONVERGENCE_RETRY_COMPLETED: called on completion of a model training try
-            CONVERGED: called when trainer convergence criteria is met
-            DIVERGED: called when trainer convergence criteria is not met after all retries
     """
-
     DATA_SAMPLING_COMPLETED = "data-sampling-completed"
-    # convergence events
-    CONVERGENCE_RETRY_STARTED = "convergence_retry_started"
-    CONVERGENCE_RETRY_COMPLETED = "convergence_retry_completed"
-    CONVERGED = "converged"
-    DIVERGED = "diverged"
 
 class ActiveLearningEngine(Engine):
     """ Active Learning Engine implementing the basic active
@@ -52,9 +42,6 @@ class ActiveLearningEngine(Engine):
             eval_batch_size (Optional[int]): 
                 batch size used for model evaluation. 
                 Defaults to `train_batch_size`.
-            max_convergence_retries (Optional[int]):
-                maximum number of model training retries to meet
-                the trainers convergence criterion. Defaults to 3.
             train_val_ratio (Optional[float]):
                 ratio between training and validation data sizes.
                 Defaults to 0.9 meaning 90% of the sampled data is
@@ -68,7 +55,6 @@ class ActiveLearningEngine(Engine):
         trainer_run_kwargs:Optional[dict] ={},
         train_batch_size:Optional[int] =32,
         eval_batch_size:Optional[int] =None,
-        max_convergence_retries:Optional[int] =3,
         train_val_ratio:Optional[float] =0.9
     ) -> None:
         # initialize engine
@@ -82,7 +68,6 @@ class ActiveLearningEngine(Engine):
         self.train_batch_size = train_batch_size
         self.eval_batch_size = eval_batch_size or self.train_batch_size
         self.trainer_run_kwargs = trainer_run_kwargs
-        self.max_convergence_retries = max_convergence_retries
         self.train_val_ratio = train_val_ratio
 
         # active datasets
@@ -90,6 +75,18 @@ class ActiveLearningEngine(Engine):
         self.val_data = []
         # reset datasets on start
         self.add_event_handler(Events.STARTED, type(self)._reset)
+
+    @property
+    def num_train_samples(self) -> int:
+        return sum(map(len, self.train_data))
+
+    @property
+    def num_val_samples(self) -> int:
+        return sum(map(len, self.val_data))
+
+    @property
+    def num_total_samples(self) -> int:
+        return self.num_train_samples + self.num_val_samples
 
     @property
     def train_dataset(self) -> ConcatDataset:
@@ -101,7 +98,7 @@ class ActiveLearningEngine(Engine):
         """ Validation dataset. Fallback to train dataset if no validation
             data is present yet.
         """
-        if sum(map(len, self.val_data)) > 0:
+        if self.num_val_samples > 0:
             return ConcatDataset(self.val_data)
         else:
             return self.train_dataset
@@ -130,10 +127,8 @@ class ActiveLearningEngine(Engine):
         """
         # make sure samples are valid
         assert len(samples) > 0, "No samples provided!"
-        # compute number of elements per split
-        # make sure to prefer train data, i.e. if there are not enough samples
-        # provided to populate both then only populate the train set
-        n_train = len(samples) - int(len(samples) * (1.0 - self.train_val_ratio))
+        # compute data split sizes satifying the train-validation ratio as closely as possible
+        n_train = round((self.num_total_samples + len(samples)) * self.train_val_ratio) - self.num_train_samples
         n_val = len(samples) - n_train
         # split into train and validation samples
         train_samples, val_samples = random_split(samples, [n_train, n_val])
@@ -148,21 +143,8 @@ class ActiveLearningEngine(Engine):
         # create dataloaders and update validation loader in trainer
         train_loader = DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
         self.trainer.val_loader = DataLoader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
-
-        for _ in range(self.max_convergence_retries):
-            self.fire_event(ActiveLearningEvents.CONVERGENCE_RETRY_STARTED)
-            # train model on dataset
-            self.trainer.run(train_loader, **self.trainer_run_kwargs)
-            # check convergence
-            if self.trainer.converged:
-                self.fire_event(ActiveLearningEvents.CONVERGED)
-                break
-            # call event retry completed
-            self.fire_event(ActiveLearningEvents.CONVERGENCE_RETRY_COMPLETED)
-
-        else:
-            # diverged
-            self.fire_event(ActiveLearningEvents.DIVERGED)
+        # run training
+        self.trainer.run(train_loader, **self.trainer_run_kwargs)
 
     def run(
         self, 

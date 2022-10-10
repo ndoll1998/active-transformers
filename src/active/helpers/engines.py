@@ -7,7 +7,7 @@ from torch.optim.lr_scheduler import _LRScheduler, LambdaLR
 from torch.utils.data import DataLoader
 # import ignite
 import ignite.distributed as idist
-from ignite.engine import Engine, Events
+from ignite.engine import Engine, State, Events
 from ignite.metrics import Average, Accuracy
 from ignite.handlers import EarlyStopping, Checkpoint
 from ignite.handlers.checkpoint import BaseSaveHandler
@@ -19,7 +19,7 @@ from ..utils.model import get_encoder_from_model
 from ..utils.data import map_tensors, move_to_device
 from copy import deepcopy
 from collections import OrderedDict
-from typing import Optional
+from typing import Optional, Iterable
 
 class MemorySaveHandler(BaseSaveHandler, OrderedDict):
     
@@ -164,9 +164,6 @@ class Trainer(Evaluator):
         # save validation dataloader
         self.val_loader = val_loader
 
-        # reset trainer state on startup
-        self.add_event_handler(Events.STARTED, type(self)._reset_state)
-        
         # save initial checkpoint
         self.init_encoder_ckpt = deepcopy(self.encoder.state_dict())
         self.init_optim_ckpt = deepcopy(self.optim.state_dict())
@@ -246,16 +243,49 @@ class Trainer(Evaluator):
         # detach and move to cpu
         return map_tensors(out, fn=lambda t: t.detach().cpu())
 
-    def _reset_state(self):
-        """ Event handler to reset the trainer state. Called on `STARTED`. """
+    def run(
+        self, 
+        data: Optional[Iterable] =None,
+        max_epochs: Optional[int] =None,
+        epoch_length: Optional[int] =None,
+        min_epoch_length: Optional[int] =None
+    ) -> State:
+        """ Runs the trainer over the passed data.
+
+            Overwrites the typical `ignite.Engine` behavior of continuing a
+            previous run by resetting the state before starting the engine run.
+
+            Args:
+                data (Optional[Iterable]):
+                    data (usually a `DataLoader`) to train the model on
+                max_epochs (Optional[int]): 
+                    maximum number of training epochs
+                epoch_length (Optional[int]): 
+                    length of a single training epoch. If provided, the epoch length
+                    induced by the length of the dataloader is overwritten.
+                min_epoch_length(Optional[int]): 
+                    minimum length of a single training epoch. Overwrites the induced
+                    epoch length only if it is too small. This argument is especially
+                    useful in active learning scenarios where the first few training 
+                    steps have only limited data and thus less update steps. Setting
+                    `min_epoch_length` ensures a constant minumum number of updates.
+            Returns:
+                state (State): engine state after the run
+        """
         # usually trainer tries to resume run if state holds unfinished runs
         # due to early stopping or other convergence criteria
         # to avoid that the state's progress is reset at the start of the run
-        self.state.epoch = 0
-        self.state.iteration = 0
-        # also just making sure early stopping doesn't reuse metrics from
-        # previous runs
-        self.state.metrics.clear()
+        self.state = State()
+        # get epoch length to use
+        if min_epoch_length is not None:
+            epoch_length = epoch_length or len(data)
+            epoch_length = epoch_length if epoch_length >= min_epoch_length else min_epoch_length
+        # run trainer
+        return super(Trainer, self).run(
+            data=data,
+            max_epochs=max_epochs,
+            epoch_length=epoch_length
+        )
 
     def _load_init_ckpt(self, force:bool =False):
         """ Event handler to load the initial checkpoints. Called on `STARTED`. 
@@ -305,15 +335,16 @@ class Trainer(Evaluator):
         """ Event handler loading the best checkpoint after training finished.
             Called on 'COMPLETED'.
         """
-        # load buffer from checkpoint
-        # load objects from buffer
-        self.ckpt.load_objects(
-            to_load={
-                'model': self.model,
-                'val-evaluator': self.val_evaluator
-            },
-            checkpoint=self.ckpt.save_handler.load(self.ckpt.last_checkpoint)
-        )
+        # check if there is a checkpoint to load
+        if self.ckpt.last_checkpoint is not None:
+            # load checkpoint
+            self.ckpt.load_objects(
+                to_load={
+                    'model': self.model,
+                    'val-evaluator': self.val_evaluator
+                },
+                checkpoint=self.ckpt.save_handler.load(self.ckpt.last_checkpoint)
+            )
 
     def _reset_ckpt(self):
         """ Event handler to reset the checkpoint. Called on `STARTED`. """

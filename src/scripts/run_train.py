@@ -45,6 +45,7 @@ def add_model_and_training_args(parser, group_name="Model and Training Arguments
     group.add_argument("--weight-decay", type=float, default=1.0, help="Weight decay rate")
     group.add_argument("--epochs", type=int, default=50, help="Maximum number of epochs to train within a single AL step")
     group.add_argument("--epoch-length", type=int, default=None, help="Number of update steps of an epoch")
+    group.add_argument("--min-epoch-length", type=int, default=16, help="Minimum number of update steps of an epoch")
     group.add_argument("--batch-size", type=int, default=12, help="Batch size to use during training and evaluation")
     # specify convergence criteria
     group.add_argument("--patience", type=int, default=5, help="Early Stopping Patience")
@@ -226,5 +227,6 @@ if __name__ == '__main__':
     trainer.run(
         data=train_loader,
         max_epochs=args.epochs, 
-        epoch_length=args.epoch_length
+        epoch_length=args.epoch_length,
+        min_epoch_length=args.min_epoch_length
     )
