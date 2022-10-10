@@ -119,6 +119,8 @@ class AbstractStrategy(Engine, ABC):
             Returns:
                 indices (Sequence[int]): indices of selected data points in pool
         """
+        # check query size
+        assert query_size <= len(pool), "Query size (%i) larger than pool (%i)" % (query_size, len(pool))
         # create dataloader
         loader = DataLoader(
             pool,

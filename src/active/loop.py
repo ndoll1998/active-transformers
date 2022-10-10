@@ -4,6 +4,7 @@ from .strategies.strategy import AbstractStrategy
 from .strategies.random import Random
 from itertools import filterfalse
 from typing import Sequence
+from math import ceil
 
 class ActiveLoop(object):
 
@@ -42,7 +43,7 @@ class ActiveLoop(object):
         # select samples using strategy
         indices = strategy.query(
             pool=self.pool,
-            query_size=self.query_size,
+            query_size=min(self.query_size, len(self.pool)),
             batch_size=self.batch_size
         )
         return self.update([self.pool.indices[i] for i in indices])
@@ -54,11 +55,11 @@ class ActiveLoop(object):
         return self.apply_strategy(self.strategy)
 
     def __len__(self) -> int:
-        return len(self.pool) // self.query_size
+        return ceil(len(self.pool) / self.query_size)
 
     def __iter__(self):
         # apply initial heuristic
         yield self.init_step()
         # apply heuristic unitl pool is empty
-        while len(self.pool) >= self.query_size:
+        while len(self.pool) > 0:
             yield self.step()

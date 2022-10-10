@@ -218,13 +218,16 @@ class StreamBasedEnv(gym.Env):
         # make sure queues are empty
         assert self.state.are_queues_empty, "Trying to refill non-empty queues!"
         
-        try:
-            # gather queue from active loop
-            model_queue = next(self.loop)
-        except StopIteration:
-            # cannot fill queues since loop is exhausted
+        # check if data pool is exhausted
+        if len(self.loop.pool) == 0:
             return False
-        
+
+        # use initial sampleing strategy as long as no active learning
+        # step was done (here an activel learning step refers to training
+        # the model)
+        trained_once = self.engine.state.iteration > 0
+        model_queue = self.loop.step() if trained_once else self.loop.init_step()
+
         # build policy queue corresponding to model queue    
         policy_queue = Subset(
             dataset=self.policy_pool_data, 
@@ -267,7 +270,7 @@ class StreamBasedEnv(gym.Env):
 
         # initialize active loop which is used to gather queue
         # elements which one-by-one are passed to the policy
-        self.loop = iter(ActiveLoop(
+        self.loop = ActiveLoop(
             pool=self.model_pool_data,
             batch_size=self.engine.train_batch_size,
             # each queue is of size eval_batch_size since
@@ -280,7 +283,7 @@ class StreamBasedEnv(gym.Env):
             #       decision for the policy more complex
             strategy=self.query_strategy,
             init_strategy=Random()
-        ))
+        )
 
         # set initial queues
         self._refill_queues()
