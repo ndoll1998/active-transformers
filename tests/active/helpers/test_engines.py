@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 # import trainer
-from src.active.helpers.engines import Trainer, Events
+from src.active.helpers.engines import Trainer, State, Events
 from src.active.helpers.schedulers import LinearWithWarmup
 
 # import others
@@ -152,3 +152,40 @@ class TestTrainer:
             trainer.run(loader, max_epochs=num_epochs)
             # test scheduler training steps
             assert scheduler.num_training_steps == len(loader) * num_epochs
+
+    def test_min_epoch_length(self):
+        
+        # register classification model in transformers AutoModel
+        # necessary because the auto-model functionality is used in
+        # the trainer to extract the encoder from the model 
+        register_classification_model()
+        
+        # create model and optimizer
+        model = ClassificationModel(ClassificationModelConfig(2, 2))
+        optim = torch.optim.SGD(model.parameters(), lr=0.01) 
+        # create trainer
+        trainer = Trainer(model=model, optim=optim)
+
+        # test behavior for epoch length induced by data
+        state = trainer.run([0, 0, 0], max_epochs=0)
+        assert state.epoch_length == 3, "Expected epoch length to match length of data"
+
+        # check behavior for specified epoch length
+        state = trainer.run([], max_epochs=0, epoch_length=5)
+        assert state.epoch_length == 5, "Expected epoch length to match argument"
+        
+        # check behavior for specified epoch length lower than minimum epoch length
+        state = trainer.run([], max_epochs=0, epoch_length=5, min_epoch_length=8)
+        assert state.epoch_length == 8, "Expected epoch length to be overwritten by minimum epoch length"
+        
+        # check behavior for specified epoch length greater than minimum epoch length
+        state = trainer.run([], max_epochs=0, epoch_length=5, min_epoch_length=3)
+        assert state.epoch_length == 5, "Expected epoch length despite minimum epoch length set"
+        
+        # check behavior for specified induced epoch length lower than mininum epoch length
+        state = trainer.run([0, 0, 0], max_epochs=0, min_epoch_length=8)
+        assert state.epoch_length == 8, "Expected induced epoch length to be overwritten by minimum epoch length"
+        
+        # check behavior for specified induced epoch length greater than minimum epoch length
+        state = trainer.run([0, 0, 0], max_epochs=0, min_epoch_length=2)
+        assert state.epoch_length == 3, "Expected epoch length to induced epoch length despite minimum epoch length set"
