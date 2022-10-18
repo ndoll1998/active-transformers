@@ -148,8 +148,7 @@ def visualize_embeds(strategy):
     # return axes and figure
     return ax, fig
 
-if __name__ == '__main__':
-
+def main()
     from defparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks using active learning.")
@@ -282,3 +281,6 @@ if __name__ == '__main__':
 
     # run finished
     wandb.finish(quiet=True)
+
+if __name__ == '__main__':
+    main()

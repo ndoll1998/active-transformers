@@ -207,8 +207,7 @@ def create_ppo_config(
         lr=2e-5
     )
 
-if __name__ == '__main__':
-
+def main():
     from defparse import ArgumentParser
     parser = ArgumentParser(description="Start a PPO server providing the policy for connected clients")
     # add arguments
@@ -255,3 +254,6 @@ if __name__ == '__main__':
             verbose=2
         ),
     ).fit()
+
+if __name__ == '__main__':
+    main()

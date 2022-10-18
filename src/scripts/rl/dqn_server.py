@@ -110,8 +110,7 @@ def create_dqn_config(
     )
 
 
-if __name__ == '__main__':
-
+def main():
     from defparse import ArgumentParser
     parser = ArgumentParser(description="Start a DQN server providing the policy for connected clients")
     build_input_factory = parser.add_args_from_callable(create_input_factory, group="Server Arguments")
@@ -156,3 +155,6 @@ if __name__ == '__main__':
             verbose=2
         ),
     ).fit()
+
+if __name__ == '__main__':
+    main()

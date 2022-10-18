@@ -143,8 +143,7 @@ def create_env(
 
     return env
 
-if __name__ == '__main__':
-
+def main():
     from defparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Start reinforcement learning client running a stream-based AL environment")
@@ -209,3 +208,6 @@ if __name__ == '__main__':
         except ConnectionError:
             print("LOST CONNECTION TO POLICY INPUT SERVER!")
             break
+
+if __name__ == '__main__':
+    main()

@@ -200,8 +200,7 @@ def attach_metrics(engine, tag=None):
     P.attach(engine, 'P' if tag is None else ('%s/P' % tag))
     F.attach(engine, 'F' if tag is None else ('%s/F' % tag))
 
-if __name__ == '__main__':
-    
+def main():
     from defparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
@@ -267,3 +266,6 @@ if __name__ == '__main__':
         epoch_length=args.epoch_length,
         min_epoch_length=args.min_epoch_length
     )
+   
+if __name__ == '__main__':
+    main() 
