@@ -6,91 +6,134 @@ from ray.air import RunConfig
 from ray.air.callbacks.wandb import WandbLoggerCallback
 from ray.rllib.env.policy_server_input import PolicyServerInput
 from ray.rllib.algorithms.dqn import DQN
+# callbacks
+from ray.rllib.algorithms.callbacks import MultiCallbacks
+from src.active.rl.callbacks import (
+    CustomMetricsFromEnvCallbacks,
+    LoggingCallbacks
+)
 # import environment and model components
 from src.active.rl.stream.env import StreamBasedEnv
 from src.active.rl.stream.model import DQNModel
 from src.active.rl.extractors.transformer import TransformerFeatureExtractor
-# import argument constructors
+# import basic policy server functions
 from src.scripts.rl.ppo_server import (
-    add_server_args, 
-    add_policy_args
+    create_input_factory, 
+    create_eval_input_factory,
+    create_base_config
 )
 
+def create_evaluation_config(
+    evaluation_interval:int =1,
+    evaluation_duration:int =5,
+    num_eval_workers:int =1,
+    eval_seed:int =1337,
+):
+    """ Build the evaluation configuration
 
-if __name__ == '__main__':
+        Args:
+            evaluation_interval (int):
+                interval in which to evaluate the policy.
+            evaluation_duration (int):
+                number of episodes to evaluate the policy for.
+            num_eval_workers (int):
+                number of evaluation workers, i.e. maximum number of
+                evaluation clients that can connect simultaneously.
+            eval_seed (int):
+                seed to use for evaluation        
 
-    from argparse import ArgumentParser
-    parser = ArgumentParser(description="Start a DQN server providing the policy for connected clients")
-    add_server_args(parser)
-    add_policy_args(parser)
-    # parse arguments
-    args = parser.parse_args()
-
-    # create a dummy environment to get
-    # observation and action space
-    env = StreamBasedEnv(
-        budget=0,
-        query_size=0,
-        engine=None,
-        metric=None,
-        query_strategy=None,
-        policy_pool_data=[],
-        model_pool_data=[],
-        model_test_data=[],
-        # specify variables that degine observation space
-        policy_sequence_length=args.policy_sequence_length,
-        model_sequence_length=args.model_sequence_length,
-        max_num_labels=args.model_num_labels
+        Returns:
+            config (dict): evaluation configuration
+    """
+    return dict(
+        evaluation_interval=evaluation_interval,
+        evaluation_duration=evaluation_duration,
+        evaluation_parallel_to_training=True,
+        evaluation_config=dict(
+            input=None, # set later
+            explore=False,
+            seed=eval_seed
+        ),
+        evaluation_num_workers=num_eval_workers,
+        # keep_per_episode_custom_metrics=True
     )
 
-    # build configuration
-    config = dict(
-        # specify framework and gpu usage
-        framework='torch',
-        num_gpus=1, # multi-gpu not supported
+def create_dqn_config(
+    policy_pretrained_ckpt:str ="distilbert-base-uncased",
+    policy_batch_size:int =32
+):
+    """ Build the dqn policy configuration
 
-        # doesn't need an actual environment but interacts with
-        # environments through connected clients
-        env=None,
-        # still the policy needs the observation space
-        observation_space=env.observation_space,
-        action_space=env.action_space,
+        Args:
+            policy_pretrained_ckpt (str): 
+                Pretrained Transformer model of the policy feature extractor.
+            policy_batch_size (int): 
+                Batch size used for training the policy model.
 
-        # use the policy server input to generate experiences
-        input=lambda ioctx: PolicyServerInput(
-            ioctx,
-            address=args.address,
-            port=args.port + ioctx.worker_index - 1,
-            idle_timeout=3.0 # default is 3.0
+        Returns:
+            config (dict): base ray configuration
+    """
+    return dict(
+        # dqn specific config
+        num_atoms=1,
+        # dueling dqn
+        dueling=False,
+        v_min=-1.0,
+        v_max=1.0,
+        # noisy network for exploration
+        noisy=True,
+        sigma0=0.5,
+        # others
+        double_q=True,
+        n_step=1,
+        # replay buffer config
+        replay_buffer_config=dict(
+            capacity=64000,
+            # slightly prioritize samples with higher td-error
+            prioritized_replay_alpha=0.6,
+            prioritized_replay_beta=0.4,
+            prioritized_replay_eps=1e-6
         ),
-        # number of workers, i.e. maximum number of clients
-        # that connect to the server
-        num_workers=args.num_workers,
-
-        # disable off-policy estimation (OPE) as rollouts
-        # are coming from clients which doens't allow off-policy
-        off_policy_estimation_methods={},
-        
-        # algorithm parameters
-        rollout_fragment_length=args.rollout_size,
-        train_batch_size=args.policy_batch_size,
-
         # specify the policy model
         model=dict(
-            # specify custom model
+            # specify custom dqn model
             custom_model=DQNModel,
             custom_model_config=dict(
                 feature_extractor_type=TransformerFeatureExtractor,
                 feature_extractor_config=dict(
                     pretrained_ckpt=args.policy_pretrained_ckpt
-                ),
+                )
             )
         ),
         # learning rate
-        lr=2e-5,
-        # log level
-        log_level="INFO",
+        lr=2e-5
     )
+
+
+if __name__ == '__main__':
+
+    from defparse import ArgumentParser
+    parser = ArgumentParser(description="Start a DQN server providing the policy for connected clients")
+    build_input_factory = parser.add_args_from_callable(create_input_factory, group="Server Arguments")
+    build_eval_input_factory = parser.add_args_from_callable(create_eval_input_factory, group="Server Arguments")
+    build_dqn_config = parser.add_args_from_callable(create_dqn_config, group="Policy Arguments")
+    build_base_config = parser.add_args_from_callable(create_base_config, group="Base Arguments")
+    build_eval_config = parser.add_args_from_callable(create_evaluation_config, group="Evaluation Arguments")
+    # parse arguments
+    args = parser.parse_args()
+
+    # build full configuration
+    config = dict(
+        **build_base_config(),
+        **build_eval_config(),
+        **build_dqn_config()
+    )
+    config['input'] = build_input_factory()
+    config['evaluation_config']['input'] = build_eval_input_factory()
+    config['callbacks'] = MultiCallbacks([
+        CustomMetricsFromEnvCallbacks,
+        LoggingCallbacks
+    ])
 
     # run tuner, i.e. train policy
     Tuner(
@@ -99,15 +142,12 @@ if __name__ == '__main__':
         run_config=RunConfig(
             # stop config
             stop=dict(
-                # training_iteration=,
                 timesteps_total=args.timesteps,
-                # episode_reward_mean=
             ),
             # setup wandb callback
             callbacks=[
                 WandbLoggerCallback(
                     project="rl-active-learning",
-                    job_type="tune",
                     group=None,
                     log_config=False,
                     save_checkpoints=False,

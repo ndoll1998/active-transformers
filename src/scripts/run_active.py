@@ -1,14 +1,10 @@
 import os
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 # datasets and transformers
 import datasets
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForSequenceClassification,
-    AutoModelForTokenClassification
-)
+from transformers import AutoTokenizer
 # import active learning components
 from src.active.loop import ActiveLoop
 from src.active.strategies import *
@@ -27,82 +23,97 @@ import wandb
 from matplotlib import pyplot as plt
 # helper functions
 from src.scripts.run_train import (
-    add_data_args,
-    add_model_and_training_args,
     load_and_preprocess_datasets,
-    create_model_optim_scheduler,
+    create_trainer,
     attach_metrics
 )
-
-
-#
-# Argument Parsing
-#
-
-def add_active_learning_args(parser, group_name="Active Learning Arguments"):
-    
-    group = parser.add_argument_group(group_name)
-    # specify strategy and active learning params
-    group.add_argument("--strategy", type=str, default="random", help="Active Learning Strategy to use")
-    group.add_argument("--query-size", type=int, default=25, help="Number of data points to query from pool at each AL step")
-    group.add_argument("--steps", type=int, default=-1, help="Number of Active Learning Steps. Defaults to -1 meaning the whole dataset will be processed.")
-    # return argument group
-    return group
+# argparse helpers
+from typing import Literal
+from defparse import Ignore
 
 
 #
 # Build Strategy and AL-Engine
 #
 
-def build_strategy(args, model):
-    if args.strategy == 'random': return Random()
-    elif args.strategy == 'least-confidence': return LeastConfidence(model)
-    elif args.strategy == 'prediction-entropy': return PredictionEntropy(model)
-    elif args.strategy == 'badge' and args.task == 'sequence':
+def build_strategy(model, strategy, task):
+    if strategy == 'random': return Random()
+    elif strategy == 'least-confidence': return LeastConfidence(model)
+    elif strategy == 'prediction-entropy': return PredictionEntropy(model)
+    elif strategy == 'badge' and task == 'sequence':
         return BadgeForSequenceClassification(get_encoder_from_model(model), model.classifier)
-    elif args.strategy == 'badge' and args.task == 'token':
+    elif strategy == 'badge' and task == 'token':
         return BadgeForTokenClassification(get_encoder_from_model(model), model.classifier)
-    elif args.strategy == 'alps': return AlpsConstantEmbeddings(model, mlm_prob=0.15)
-    elif args.strategy == 'egl': return EglByTopK(model, k=5)
-    elif args.strategy == 'egl-sampling': return EglBySampling(model, k=8)
-    elif args.strategy == 'entropy-over-max': return EntropyOverMax(model)
-    elif args.strategy == 'entropy-over-max-ignore': return EntropyOverMax(model, ignore_labels=[0])
-    elif args.strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
+    elif strategy == 'alps': return AlpsConstantEmbeddings(model, mlm_prob=0.15)
+    elif strategy == 'egl': return EglByTopK(model, k=5)
+    elif strategy == 'egl-sampling': return EglBySampling(model, k=8)
+    elif strategy == 'entropy-over-max': return EntropyOverMax(model)
+    elif strategy == 'entropy-over-max-ignore': return EntropyOverMax(model, ignore_labels=[0])
+    elif strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
 
-def build_engine_and_loop(args, ds):
+def create_engine_and_loop(
+    trainer:Ignore[Trainer],
+    pool:Ignore[Dataset],
+    # strategy
+    task:Literal["token", "sequence"] ="token",
+    strategy:str ="random",
+    query_size:int =25,
+    # engine run args
+    steps:int =-1,
+    # trainer run args
+    epochs:int =50,
+    epoch_length:int =None,
+    min_epoch_length:int =16,
+    batch_size:int =64
+):
+    """ Build the Active Learning Engine and Loop
 
-    # create model, optimizer and scheduler
-    model, optim, scheduler = create_model_optim_scheduler(args, ds)
+        Args:
+            trainer (Trainer): trainer instance to use
+            pool (Dataset): unlabeled pool dataset
+            task (str):
+                The learning task to solve. Either `sequence` or 
+                `token` classification.
+            strategy (str): Active Learning Strategy to use
+            steps (int): 
+                number of Active Learning Steps. Defaults to -1
+                meaning the whole pool of data will be processed.
+            query_size (int): 
+                Number of data points to query from pool at each AL step
+            epochs (int):
+                Maximum number of epochs to run the trainer.
+            epoch_length (int):
+                Number of update steps of a single epochs.
+            min_epoch_length (int):
+                Minimum number of update steps of a single epoch.
+            batch_size (int):
+                Batch size to use during training and evaluation.
 
+        Returns:
+            engine (ActiveLearningEngine): active learning engine instance
+            loop (ActiveLoop): active learning loop instance
+    """
     # create strategy and attach progress bar to strategy
-    strategy = build_strategy(args, model)
-
+    strategy = build_strategy(trainer.unwrapped_model, strategy, task)
     # create active learning loop
     loop = ActiveLoop(
-        pool=ds['train'],
+        pool=pool,
         strategy=strategy,
-        batch_size=64,
-        query_size=args.query_size,
+        batch_size=batch_size,
+        query_size=query_size,
         init_strategy=strategy if isinstance(strategy, Alps) else Random()
     )
 
     # create active learning engine
     al_engine = ActiveLearningEngine(
-        trainer=Trainer(
-            model=model,
-            optim=optim,
-            scheduler=scheduler,
-            acc_threshold=args.acc_threshold,
-            patience=args.patience,
-            incremental=True
-        ),
+        trainer=trainer,
         trainer_run_kwargs=dict(
-            max_epochs=args.epochs,
-            epoch_length=args.epoch_length,
-            min_epoch_length=args.min_epoch_length
+            max_epochs=epochs,
+            epoch_length=epoch_length,
+            min_epoch_length=min_epoch_length
         ),
-        train_batch_size=args.batch_size,
-        eval_batch_size=64,
+        train_batch_size=batch_size,
+        eval_batch_size=batch_size,
         train_val_ratio=0.9
     )
 
@@ -139,23 +150,19 @@ def visualize_embeds(strategy):
 
 if __name__ == '__main__':
 
-    from argparse import ArgumentParser
+    from defparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks using active learning.")
-    # specify task and data
-    add_data_args(parser)
-    add_model_and_training_args(parser)    
-    add_active_learning_args(parser)
+    # add arguments
+    build_datasets = parser.add_args_from_callable(load_and_preprocess_datasets, group="Dataset Arguments")
+    build_trainer = parser.add_args_from_callable(create_trainer, group="Trainer Arguments")
+    build_engine_and_loop = parser.add_args_from_callable(create_engine_and_loop, group="Active Learning Arguments")
     # parse arguments
     args = parser.parse_args()
 
-    # set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-    
-    # load and preprocess datasets
+    # build datasets
     tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
-    ds = load_and_preprocess_datasets(args, tokenizer=tokenizer)
+    ds = build_datasets()
 
     config = vars(args)
     config['dataset'] = ds['train'].info.builder_name
@@ -163,8 +170,11 @@ if __name__ == '__main__':
     # as environment variables (see `experiments/run-active.sh`)
     wandb.init(config=config)
     
-    # build active learning engine
-    al_engine, loop = build_engine_and_loop(args, ds)
+    # build engine and loop
+    al_engine, loop = build_engine_and_loop(
+        trainer=build_trainer(),
+        pool=ds['train']
+    )
     
     # attach progress bar to strategy
     ProgressBar(ascii=True, desc='Strategy').attach(loop.strategy)
@@ -199,8 +209,8 @@ if __name__ == '__main__':
         # create path to save samples in
         path = os.path.join(
             "output",
-            os.environ["WANDB_RUN_GROUP"],
-            os.environ["WANDB_NAME"],
+            os.environ.get("WANDB_RUN_GROUP", "default"),
+            os.environ.get("WANDB_NAME", "default-run"),
         )
         os.makedirs(path, exist_ok=True)
         # get selected samples and re-create input texts
