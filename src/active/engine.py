@@ -73,7 +73,8 @@ class ActiveLearningEngine(Engine):
         # active datasets
         self.train_data = []
         self.val_data = []
-        # reset datasets on start
+
+        # reset engine state and datasets on start
         self.add_event_handler(Events.STARTED, type(self)._reset)
 
     @property
@@ -114,9 +115,7 @@ class ActiveLearningEngine(Engine):
         self.train_data.clear()
         self.val_data.clear()
         # reset state
-        self.state.epoch = 0
-        self.state.iteration = 0
-        self.state.metrics.clear()
+        self.state = State()
 
     def step(self, samples:Dataset):
         """ Engines step function implementing a single step of
