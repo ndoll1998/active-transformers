@@ -222,7 +222,7 @@ class StreamBasedEnv(gym.Env):
         if len(self.loop.pool) == 0:
             return False
 
-        # use initial sampleing strategy as long as no active learning
+        # use initial sampling strategy as long as no active learning
         # step was done (here an activel learning step refers to training
         # the model)
         trained_once = self.engine.state.iteration > 0
@@ -235,6 +235,8 @@ class StreamBasedEnv(gym.Env):
         )
 
         # get model predictions
+        # note that by calling the evaluator's step function explicitly
+        # no event are fired and thus the reward metric is not influenced
         batch = default_collate_drop_labels(model_queue)
         logits = self.evaluator.step(batch).logits.cpu()
 
@@ -297,6 +299,8 @@ class StreamBasedEnv(gym.Env):
             # select current query
             self.state.select_query()
         
+        # info dictionary
+        info = {}
         # get next observations and check
         # if done, i.e. budget is exhausted
         obs = self.state.next_query()
@@ -342,8 +346,10 @@ class StreamBasedEnv(gym.Env):
         
         if done:
             # call engine completed event
-            self.engine._fire_event(Events.COMPLETED)
             self.engine._fire_event(Events.EPOCH_COMPLETED)
+            self.engine._fire_event(Events.COMPLETED)
+            # add engine metrics to info
+            info['custom_metrics'] = self.engine.state.metrics
 
         # return observation, reward, done and info
-        return obs, reward, done, {}
+        return obs, reward, done, info
