@@ -5,93 +5,112 @@ import ray
 from ray.rllib.env.policy_client import PolicyClient
 # import environment and active learning components
 from src.active.rl.stream.env import StreamBasedEnv
-from src.active.rl.utils import client_run_episode
 from src.active.helpers.engines import Evaluator
-from src.active.engine import ActiveLearningEvents
+from src.active.metrics import AreaUnderLearningCurve
+from src.active.engine import (
+    ActiveLearningEngine, 
+    ActiveLearningEvents
+)
+from src.active.loop import ActiveLoop
 # import ignite
+from ignite.engine import Events
 from ignite.metrics import Fbeta
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # transformers tokenizer
 from transformers import AutoTokenizer
 # import active learning setup helpers
+from src.scripts.run_train import attach_metrics
 from src.scripts.run_active import (
-    add_data_args,
-    add_model_and_training_args,
     load_and_preprocess_datasets,
-    build_engine_and_loop
+    create_trainer,
+    create_engine_and_loop
 )
 # import exception
 from requests.exceptions import ConnectionError
+# argparse helpers
+from typing import Literal
+from defparse import Ignore
 
-#
-# Argument Parsing
-#
+def create_client(
+    server_address:str ="0.0.0.0:9900",
+    mode:Literal["remote", "local"] ='remote',
+    training_disabled:bool =False
+):
+    """ Create Policy Client
 
-def add_client_args(parser, group_name="Policy Client Arguments"):
+        Args:
+            server_address (str): URI to the server running the policy
+            mode (str): inference mode
+            training_disabled (bool):
+                whether to use observations from this client for
+                policy updates        
 
-    group = parser.add_argument_group(group_name)
-    # server and client setup
-    group.add_argument("--server-address", type=str, default="http://0.0.0.0:9900", help="URI to server running the policy")
-    # return argument group
-    return group
+        Returns:
+            client (PolicyClient): client instance
+    """
+    return PolicyClient(
+        address=server_address,
+        inference_mode=mode,
+        # only update policy on explicit request
+        update_interval=None
+    )
 
-def add_reinforcement_learning_args(parser, group_name="Reinforcement Learning Arguments"):
+def create_env(
+    ds:Ignore[dict],
+    engine:Ignore[ActiveLearningEngine],
+    loop:Ignore[ActiveLoop],
+    # active learning args
+    query_strategy:str ="random",
+    query_size:int =25,
+    steps:int =-1,
+    # policy and model
+    pretrained_ckpt:str ="distilbert-base-uncased",
+    policy_pretrained_ckpt:str ="distilbert-base-uncased"
+) -> StreamBasedEnv:
+    """ Build Stream-based Active Learning Environment
 
-    group = parser.add_argument_group(group_name)
-    # reinforcement learning params
-    group.add_argument("--policy-pretrained-ckpt", type=str, default="distilbert-base-uncased", help="Pretrained checkpoint of the policy transformer model. Only used for tokenization.")
-    group.add_argument("--query-strategy", type=str, default="random", help="Strategy used for preselection of query elements from dataset. Query elements are passed to the agent for final selection.")
-    # return argument group
-    return group
-
-def add_active_learning_args(parser, group_name="Active Learning Arguments"):
+        Args:
+            ds (dict): dictionary containing datasets
+            engine (ActiveLearningEngine): active learning engine instance
+            loop (ActiveLearningLoop): 
+                active learning loop, actually only the strategy
+                within is of interest
+            query_strategy (str):
+                Strategy used for preselection of query elements from
+                dataset. Query elements are passed to the agent for
+                final selection.
+            query_size (int): 
+                Number of data points to query from pool at each AL step
+            steps (int): 
+                number of Active Learning Steps. Defaults to -1
+                meaning the whole pool of data will be processed.
+            pretrained_ckpt (str):
+                pre-trained tranformer checkpoint to use.
+            policy_pretrained_ckpt (str): 
+                Pretrained Transformer model of the policy feature extractor.
     
-    group = parser.add_argument_group(group_name)
-    # server and client setup
-    group.add_argument("--query-size", type=int, default=25, help="Number of data points to query from pool at each AL step")
-    group.add_argument("--steps", type=int, default=-1, help="Number of Active Learning Steps. Defaults to -1 meaning the whole dataset will be processed.")
-    # return argument group
-    return group
+        Returns:
+            env (StreamBasedEnv): stream-based active learning environment
+    """
 
-#
-# Environment
-#
-
-def build_stream_based_env(args):
-    
-    # only token classification tasks are allowed
-    assert args.task == "token", "Only token classification tasks are supported"
-    # set strategy to query strategy, this is useful since the strategy
-    # generated for the loop in `build_engine_and_loop` is exactly the
-    # query strategy but is used differently. Besides the function expects
-    # the strategy field to be set anyways
-    args.strategy = args.query_strategy
-
-    assert args.pretrained_ckpt == args.policy_pretrained_ckpt, "Preprocessing not implemented yet!"
-    # load and preprocess datasets
-    # TODO: what if policy and model need different tokenization
-    tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
-    ds = load_and_preprocess_datasets(args, tokenizer=tokenizer)
-    # build active learning engine
-    al_engine, loop = build_engine_and_loop(args, ds)
-
+    assert pretrained_ckpt == policy_pretrained_ckpt, "Preprocessing not implemented yet!"
     # attach progress bar to trainer
-    ProgressBar(ascii=True).attach(al_engine.trainer, output_transform=lambda out: {'loss': Evaluator.get_loss(out)})
+    ProgressBar(ascii=True).attach(engine.trainer, output_transform=lambda out: {'loss': Evaluator.get_loss(out)})
 
     # attach log event handler
-    @al_engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
-    def log_handler(engine):
+    @engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
+    def log_handler(e):
         # log active learning step
         print("AL Step:              %i" % engine.state.iteration)
         print("Train Data Size:      %i" % len(engine.train_dataset))
         print("Validation Data Size: %i" % len(engine.val_dataset))
 
     # create environment
-    return StreamBasedEnv(
+    env = StreamBasedEnv(
         # active learning setup
-        budget=(args.steps * args.query_size) if args.steps > -1 else float('inf'),
-        query_size=args.query_size,
-        engine=al_engine,
+        budget=(steps * query_size) if steps > -1 else float('inf'),
+        query_size=query_size,
+        engine=engine,
         # reward metric and query strategy
         metric=Fbeta(beta=1.0, output_transform=Evaluator.get_logits_and_labels),
         query_strategy=loop.strategy,
@@ -99,38 +118,61 @@ def build_stream_based_env(args):
         policy_pool_data=ds['train'],
         model_pool_data=ds['train'],
         model_test_data=ds['test']        
-    )
+    ) 
+
+    @engine.on(Events.ITERATION_COMPLETED)
+    def log_reward_metric(e):
+        print("Reward Metric:        %.02f" % env.state.prev_metric)
+
+    # reset env once to instantiate evaluator
+    env.reset()
+    # attach metrics to active learning engine
+    attach_metrics(env.evaluator)
+    AreaUnderLearningCurve(
+        output_transform=lambda _: (
+            # point of learning curve given
+            # by iteration and reward metric
+            env.engine.state.iteration,
+            env.evaluator.state.metrics['F']
+        )
+    ).attach(env.engine, "Area(F)")
+
+    @engine.on(Events.COMPLETED)
+    def log_area_metric(e):
+        print("Area Under Curve:     %.02f" % env.engine.state.metrics["Area(F)"])
+
+    return env
 
 if __name__ == '__main__':
 
-    from argparse import ArgumentParser
+    from defparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Start reinforcement learning client running a stream-based AL environment")
-    add_client_args(parser)    
-    add_data_args(parser)
-    add_model_and_training_args(parser)
-    add_reinforcement_learning_args(parser)
-    add_active_learning_args(parser)
-
+    # add arguments
+    build_client = parser.add_args_from_callable(create_client, group="Client Arguments")
+    build_datasets = parser.add_args_from_callable(load_and_preprocess_datasets, group="Dataset Arguments", ignore=["task"])
+    build_trainer = parser.add_args_from_callable(create_trainer, group="Trainer Arguments", ignore=["task"])
+    build_engine_and_loop = parser.add_args_from_callable(create_engine_and_loop, group="Active Learning Arguments", ignore=["task", "strategy"])
+    build_env = parser.add_args_from_callable(create_env, group="Environment Arguments")
     # parse arguments
     args = parser.parse_args()
-    
-    # set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
 
     # build environment
-    env = build_stream_based_env(args)
-
-    env.engine.max_convergence_retries=1
-
-    # create policy client
-    client = PolicyClient(
-        address=args.server_address,
-        inference_mode='remote', # or local
-        # only update policy on explicit request
-        update_interval=None
+    env = build_env(
+        build_datasets(task="token"),
+        *build_engine_and_loop(
+            trainer=build_trainer(task="token"),
+            pool=[], # net needed here
+            strategy=args.query_strategy
+        )
     )
+
+    try:
+        # create policy client
+        client = build_client()
+    except ConnectionError:
+        print("FAILED TO OPEN CONNECTION TO POLICY INPUT SERVER!")
+        exit()
 
     i = 0
     # run for n episodes
@@ -139,17 +181,30 @@ if __name__ == '__main__':
 
         try:
             # update local policy model
+            # this also updates global variables including random states
             if client.local:
                 print("POLLING MODEL WEIGHTS")
                 client.update_policy_weights()
 
             print("RUNNING EPISODE %i" % i)
-            # run episode
-            client_run_episode(
-                env=env,
-                client=client,
-                training_enabled=True
+    
+            # reset environment and start episode
+            obs = env.reset()
+            eid = client.start_episode(
+                training_enabled=not args.training_disabled
             )
+
+            done = False
+            while not done:
+                # get action from client
+                action = client.get_action(eid, obs)
+                # apply actions and observe returns
+                obs, reward, done, info = env.step(action)
+                # log returns
+                client.log_returns(eid, reward, info)
+
+            # end episode
+            client.end_episode(eid, obs)
 
         except ConnectionError:
             print("LOST CONNECTION TO POLICY INPUT SERVER!")
