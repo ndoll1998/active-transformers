@@ -3,7 +3,7 @@ TASK=sequence
 
 # specify experiment name and dataset
 EXPERIMENT=costumer-reviews
-DATASET=src/data/costumer_reviews.py
+DATASET=./data/costumer_reviews.py
 LABEL=label
 MIN_LENGTH=0
 MAX_LENGTH=40

@@ -3,7 +3,7 @@ TASK=token
 
 # specify experiment name and dataset
 EXPERIMENT=conll2003-german
-DATASET=src/data/conll2003.py
+DATASET=./data/conll2003.py
 LABEL=ner_tags
 MIN_LENGTH=16
 MAX_LENGTH=64
