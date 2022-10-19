@@ -1,7 +1,5 @@
 name: PyPI
-on:
-  push:
-    branches: [ master ]
+on: push
 
 jobs:
     build-and-publish:
