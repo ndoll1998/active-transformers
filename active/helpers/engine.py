@@ -115,6 +115,12 @@ class ActiveLearningEngine(Engine):
         self.train_data.clear()
         self.val_data.clear()
 
+    def _reset_state(self):
+        """ Reset the internal state of the engine. Called at the very
+            beginning of the `run` method.
+        """
+        self.state = State()
+
     def step(self, samples:Dataset):
         """ Engines step function implementing a single step of
             the default active learning procedure 
@@ -149,8 +155,8 @@ class ActiveLearningEngine(Engine):
         steps:Optional[int] =None,
         seed:Optional[int] =None
     ) -> State:
-        # reset state
-        self.state = State()
+        # fully reset state
+        self._reset_state()
         # run
         return super(ActiveLearningEngine, self).run(
             data=loop,

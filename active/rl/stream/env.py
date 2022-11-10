@@ -261,9 +261,12 @@ class StreamBasedEnv(gym.Env):
 
         # call engine started event, this resets the
         # internals of the engine, i.e. it re-initializes
-        # the model and resets the optimizer, scheduler and state
+        # the model and resets the optimizer, scheduler
         self.engine._fire_event(Events.STARTED)      
-        self.engine._fire_event(Events.EPOCH_STARTED)  
+        self.engine._fire_event(Events.EPOCH_STARTED)
+        # for now the state has to be reset manually
+        # TODO: there has to be a way of doing this in event handler
+        self.engine._reset_state()
 
         # initialize evaluator and attach metric if not done before
         if self.evaluator is None:
