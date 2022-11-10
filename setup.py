@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="active-transformers",
-    version="0.1.0",
+    version="0.1.1",
     description="Active Learning for Transformer with focus on Sequence Tagging tasks",
     long_description=open("README.md", "r").read(),
     long_description_content_type='text/markdown',
