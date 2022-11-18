@@ -33,10 +33,11 @@ setup(
         "scikit-learn>=1.1.1",
         "scipy>=1.9.0",
         "matplotlib>=3.5.2",
-        "defparse>=0.1.2"
+        "defparse>=0.1.2",
+        "ray[default]>=2.1.0"
     ],
     extras_require={
-        "rl": ["ray[rllib]>=2.0.0"]
+        "rl": ["ray[rllib]>=2.1.0"]
     },
 
     tests_require=["pytest>=7.1.2"],
