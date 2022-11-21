@@ -1,191 +1,26 @@
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, random_split
-# datasets and transformers
-import datasets
-from transformers import (
-    AutoTokenizer, 
-    AutoModelForSequenceClassification,
-    AutoModelForTokenClassification
-)
-# import trainer and evaluator engines
+# import trainer and evaluator engine
 from active.helpers.trainer import Trainer
 from active.helpers.evaluator import Evaluator
-# import data processor for token classification tasks
-from active.helpers.processor import TokenClassificationProcessor
+# import data processors
+from active.helpers.processor import (
+    SequenceClassificationProcessor,
+    BioTaggingProcessor
+)
 # import ignite
 from ignite.engine import Events
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
+# hugginface
+import datasets
+import transformers
 # others
 import wandb
-from typing import Literal
-
-def load_and_preprocess_datasets(
-    pretrained_ckpt:str ='distilbert-base-uncased',
-    task:Literal["token", "sequence"] ='token',
-    dataset:str ='conll2003',
-    label_column:str ='ner_tags',
-    min_length:int =0,
-    max_length:int =32,
-    use_cache:bool =False
-):
-    """ Load and Preprocess train and test datasets.
-
-        Args:
-            pretrained_ckpt (str):
-                pre-trained tranformer checkpoint to use.
-            task (str): 
-                The learning task to solve.
-            dataset (str):
-                The dataset to use. Must match the `task` argument.
-            label_column (str):
-                Dataset column containing target labels.
-            min_length (int): 
-                Minimum sequence length an example must fulfill.
-                Samples with less tokens will be filtered from dataset.
-            max_length (int):
-                Maximum length of input sequences. Samples with more
-                tokens will be truncated.
-            use_cache (bool):
-                Whether to use cached preprocessed datasets or do
-                the preprocessing explicitly.
-
-        Returns:
-            ds (dict): dictionary containing the train and test dataset.
-    """
-
-    # load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(pretrained_ckpt)
-    # load datasets
-    ds = datasets.load_dataset(dataset, split={'train': 'train', 'test': 'test'})
-    dataset_info=next(iter(ds.values())).info
-
-    if task == 'sequence':
-        # tokenize inputs and carry label
-        processor = lambda example: tokenizer(   
-            text=example['text'],
-            max_length=max_length,
-            truncation=True,
-            padding='max_length',
-            return_token_type_ids=False
-        ) | {'labels': example[label_column]}
-
-    elif task == 'token':
-        # create sequence tagging processor
-        processor = TokenClassificationProcessor(
-            tokenizer=tokenizer,
-            dataset_info=dataset_info,
-            tags_field=label_column,
-            max_length=max_length
-        )
-
-    else:
-        # task not recognized
-        raise ValueError("Unknown task: %s" % task)
-    
-    # filter out all examples that don't satify the minimum length
-    filter_ = lambda example: len(example['input_ids']) - example['input_ids'].count(tokenizer.pad_token_id) > min_length
-        
-    # process and filter datasets
-    ds = {
-        key: dataset \
-            .map(processor, batched=False, desc=key, load_from_cache_file=use_cache)
-            .filter(filter_, batched=False, desc=key, load_from_cache_file=use_cache)
-        for key, dataset in ds.items()
-    }
-    # set data formats
-    for dataset in ds.values():
-        dataset.set_format(
-            type='torch',
-            columns=['input_ids', 'attention_mask', 'labels']
-        )
-
-    return ds
-
-def create_trainer(
-    pretrained_ckpt:str ='distilbert-base-uncased',
-    task:Literal["token", "sequence"] ='token',
-    dataset:str ='conll2003',
-    label_column:str ='ner_tags',
-    lr:float =2e-5,
-    weight_decay:float =0.01,
-    acc_threshold:float =2.0,
-    patience:int =15,
-    incremental:bool =True,
-    # additional arguments not used in the function
-    # itself but needed for running the trainer
-    epochs:int =50,
-    epoch_length:int =None,
-    min_epoch_length:int =16,
-    batch_size:int =32,
-    seed:int =1337
-):
-    """ Create the transformer model, optimizer and scheduler
-
-        Args:
-            pretrained_ckpt (str):
-                pre-trained tranformer checkpoint to use.
-            task (str): 
-                The learning task to solve. Either `sequence` or 
-                `token` classification.
-            dataset (str):
-                The dataset to use. Must match the `task` argument.
-            label_column (str):
-                Dataset column containing target labels.
-            lr (float): 
-                Learning rate used by optimizer.
-            weight_decay (float): 
-                Weight decay rate used by optimizer.
-            acc_threshold (float):
-                Accuracy threshold to detect convergence.
-            patience (int):
-                Early Stopping Patience used by trainer.
-            incremental (bool):
-                Whether to use an incremental trainer or to reset the
-                model before each active learning step.
-            epochs (int):
-                Maximum number of epochs to run the trainer.
-            epoch_length (int):
-                Number of update steps of a single epochs.
-            min_epoch_length (int):
-                Minimum number of update steps of a single epoch.
-            batch_size (int):
-                Batch size to use during training and evaluation.
-            seed (int):
-                random seed to use
-
-        Returns:
-            trainer (Trainer): trainer instance
-    """
-    # set random seed
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
-    # get dataset info
-    builder = datasets.load_dataset_builder(dataset)
-    dataset_info = builder._info()
-    # get number of labels in data
-    num_labels = \
-        dataset_info.features[label_column].num_classes if task == 'sequence' else \
-        dataset_info.features[label_column].feature.num_classes
-    
-    ModelTypes = {
-        'sequence': AutoModelForSequenceClassification,
-        'token': AutoModelForTokenClassification
-    }
-    # load model and create optimizer
-    model = ModelTypes[task].from_pretrained(pretrained_ckpt, num_labels=num_labels)
-    optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    # build trainer
-    return Trainer(
-        model=model,
-        optim=optim,
-        scheduler=None,
-        acc_threshold=acc_threshold,
-        patience=patience,
-        incremental=incremental
-    )
+from enum import Enum
+from typing import Tuple, Dict, Union, Callable, Type
+from pydantic import BaseModel, validator, root_validator
 
 def attach_metrics(engine, tag=None):
     # create metrics
@@ -201,36 +36,278 @@ def attach_metrics(engine, tag=None):
     P.attach(engine, 'P' if tag is None else ('%s/P' % tag))
     F.attach(engine, 'F' if tag is None else ('%s/F' % tag))
 
+class Task(Enum):
+    """ Enum defining supported task types:
+            (1) sequence:    marks the experiment as a sequence classification task
+            (2) bio-tagging: marks the experiment as a bio-tagging task
+    """
+    SEQUENCE = "sequence"
+    BIO_TAGGING = "bio-tagging"
+
+    @property
+    def model_type(self) -> Type[transformers.PreTrainedModel]:
+        if self is Task.SEQUENCE:
+            return transformers.AutoModelForSequenceClassification
+        elif self is Task.BIO_TAGGING:
+            return transformers.AutoModelForTokenClassification
+
+        raise ValueError("No model found for task <%s>" % self)
+    
+    @property
+    def processor_type(self) -> Type[Callable]:
+        if self is Task.SEQUENCE:
+            return SequenceClassificationProcessor
+        elif self is Task.BIO_TAGGING:
+            return BioTaggingProcessor
+        
+        raise ValueError("No data processor found for task <%s>" % self)
+
+class DataConfig(BaseModel):
+    """ Data Configuration Model """
+    task:Task =None
+    # dataset config
+    dataset:str
+    text_column:str
+    label_column:str
+    # bio-tag prefixes
+    begin_tag_prefix:str =None
+    in_tag_prefix:str =None
+    # sequence length
+    min_sequence_length:int
+    max_sequence_length:int
+
+    @root_validator()
+    def _check_config(cls, values):
+        # get values
+        task = values.get('task')
+        dataset = values.get('dataset')
+        text_col = values.get('text_column')        
+        label_col = values.get('label_column')        
+        min_seq_len = values.get('min_sequence_length')
+        max_seq_len = values.get('max_sequence_length')
+        begin_tag_prefix = values.get('begin_tag_prefix')
+        in_tag_prefix = values.get('in_tag_prefix')
+
+        # check if dataset is none
+        if dataset is None:
+            raise ValueError("Dataset set to None")
+
+        try:
+            # try to load dataset builder
+            builder = datasets.load_dataset_builder(dataset)
+        except FileNotFoundError as e:
+            # handle invalid/unkown datasets
+            raise ValueError("Unkown dataset: %s" % dataset) from e
+        
+        # get dataset info
+        info = builder._info()
+
+        # check if label column is valid
+        if label_col not in info.features:
+            raise ValueError("Specified label column `%s` is not present in dataset. Valid columns are: %s" % (label_col, ','.join(info.features.keys())))
+
+        # check if text column is valid
+        if text_col not in info.features:
+            raise ValueError("Specified text column `%s` is not present in dataset. Valid columns are: %s" % (text_col, ','.join(info.features.keys())))
+
+        # make sure sequence length range is set properly
+        if min_seq_len > max_seq_len:
+            raise ValueError("Minimum sequence length (%i) larger than maximum sequence length (%i)" % (min_seq_len, max_seq_len))
+
+        # make sure the tag prefixes are set for bio tagging tasks
+        if (task is not None) and (task is Task.BIO_TAGGING):
+            if (begin_tag_prefix is None) or (in_tag_prefix is None):
+                raise ValueError("Begin/In tag prefixes must be set for bio tagging tasks!")
+
+        # all done
+        return values
+
+    #
+    # Helper Functions
+    #
+
+    @property
+    def dataset_info(self) -> datasets.DatasetInfo:
+        builder = datasets.load_dataset_builder(self.dataset)
+        return builder._info()
+
+    @property
+    def label_space(self) -> Tuple[str]:
+        if self.task is Task.SEQUENCE:
+            return tuple(self.dataset_info.features[self.label_column].names)
+        elif self.task is Task.BIO_TAGGING:
+            return tuple(self.dataset_info.features[self.label_column].feature.names)
+    
+    def load_dataset(
+        self, 
+        tokenizer:transformers.PreTrainedTokenizer,
+        *,
+        split:Dict[str, str] ={'train': 'train', 'test': 'test'}, 
+        use_cache:bool =False
+    ) -> Dict[str, datasets.arrow_dataset.Dataset]:
+        # load dataset 
+        ds = datasets.load_dataset(self.dataset, split=split)
+        
+        # create processor
+        processor = self.task.processor_type(
+            tokenizer=tokenizer,
+            max_length=self.max_sequence_length,
+            text_column=self.text_column,
+            label_column=self.label_column,
+            label_space=self.label_space,
+            begin_tag_prefix=self.begin_tag_prefix,
+            in_tag_prefix=self.in_tag_prefix         
+        )
+        # create filter function
+        pad_token_id = tokenizer.pad_token_id
+        filter_ = lambda e: (np.asarray(e['input_ids']) != pad_token_id).sum() > self.min_sequence_length
+
+        # preprocess datasets
+        ds = {
+            key: dataset \
+                .map(processor, batched=False, desc=key, load_from_cache_file=use_cache) \
+                .filter(filter_, batched=False, desc=key, load_from_cache_file=use_cache)
+            for key, dataset in ds.items()
+        }
+        
+        # set data formats
+        for dataset in ds.values():
+            dataset.set_format(
+                type='torch',
+                columns=['input_ids', 'attention_mask', 'labels']
+            )
+
+        # return preprocessed datasets
+        return ds
+
+class ModelConfig(BaseModel):
+    """ Model Configuration Model """
+    task:Task = None
+    # pretrained model checkpoint
+    pretrained_ckpt:str
+    
+    @validator('pretrained_ckpt')
+    def _check_pretrained_ckpt(cls, value):
+        try:
+            # check if model is valid by loading config
+            transformers.AutoConfig.from_pretrained(value)
+        except OSError as e:
+            # handle model invalid
+            raise ValueError("Unkown pretrained checkpoint: %s" % value) from e
+ 
+        return value
+
+    @property
+    def tokenizer(self) -> transformers.PreTrainedTokenizer:
+        return transformers.AutoTokenizer.from_pretrained(self.pretrained_ckpt, use_fast=True)
+
+    def load_model(self, label_space:Tuple[str]) -> transformers.PreTrainedModel:
+        return self.task.model_type.from_pretrained(
+            self.pretrained_ckpt, 
+            num_labels=len(label_space)
+        )
+
+class TrainerConfig(BaseModel):
+    """ Trainer Configuration Model """
+    incremental:bool
+    # optimizer setup
+    lr:float
+    weight_decay:float
+    # training setup
+    batch_size:int
+    max_epochs:Union[int, None]
+    epoch_length:Union[int, None]
+    min_epoch_length:Union[int, None]
+    # convergence criteria
+    early_stopping_patience:int
+    accuracy_threshold:float
+
+    def build_trainer(self, model:transformers.PreTrainedModel):
+        # create optimizer
+        optim=torch.optim.AdamW(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+        # create trainer
+        return Trainer(
+            model=model,
+            optim=optim,
+            scheduler=None,
+            acc_threshold=self.accuracy_threshold,
+            patience=self.early_stopping_patience,
+            incremental=self.incremental
+        )
+
+    @property
+    def run_kwargs(self) -> Dict[str, int]:
+        return self.dict(include={'max_epochs', 'epoch_length', 'min_epoch_length'})
+
+class ExperimentConfig(BaseModel):
+    """ Experiment Configuration Model
+        Includes all of the above configurations as sub-models
+    """
+    # experiment name used for referencing
+    # and task type
+    name:str
+    task:Task
+    # data, model and trainer config
+    data:DataConfig
+    model:ModelConfig
+    trainer:TrainerConfig
+
+    @validator('data', 'model', pre=True)
+    def _pass_task_to_sub_configs(cls, v, values):
+        assert 'task' in values
+        if isinstance(v, BaseModel):
+            return v.copy(update={'task': values.get('task')})
+        elif isinstance(v, dict):
+            return v | {'task': values.get('task')}
+
+    def load_dataset(self, **kwargs) -> Dict[str, datasets.arrow_dataset.Dataset]:
+        return self.data.load_dataset(self.model.tokenizer, **kwargs)
+
+    def load_model(self) -> transformers.PreTrainedModel:
+        return self.model.load_model(self.data.label_space)
+
+    def build_trainer(self) -> Trainer:
+        return self.trainer.build_trainer(self.load_model())
+
 def main():
-    from defparse import ArgumentParser
+    from argparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
-    build_datasets = parser.add_args_from_callable(load_and_preprocess_datasets, group="Dataset Arguments")
-    build_trainer = parser.add_args_from_callable(create_trainer, group="Trainer Arguments", ignore=["incremental"])
+    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
+    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
+    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
     # parse arguments
     args = parser.parse_args()
 
+    # set random seed
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
+    # parse configuration
+    config = ExperimentConfig.parse_file(args.config)
+    print("Config:", config.json(indent=2))
+
     # load datasets and build trainer
-    ds = build_datasets()
-    trainer = build_trainer()
+    ds = config.load_dataset(use_cache=args.use_cache)
+    trainer = config.build_trainer()
     
-    train_data, test_data = ds['train'], ds['test']
     # split validation dataset from train set
+    train_data, test_data = ds['train'], ds['test']
     train_data, val_data = random_split(train_data, [
         int(0.8 * len(train_data)),
         len(train_data) - int(0.8 * len(train_data))
     ])
 
     # create dataloaders
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False)
-    test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False)
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
-    
-    config = vars(args)
-    config['dataset'] = ds['train'].info.builder_name
-    # initialize wandb, project and run name are set
-    # as environment variables (see `run.sh`)
-    wandb.init(config=config)
+    val_loader = DataLoader(val_data, batch_size=config.trainer.batch_size, shuffle=False)
+    test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
+    train_loader = DataLoader(train_data, batch_size=config.trainer.batch_size, shuffle=True)
+   
+    # set up wandb 
+    wandb_config = config.dict(exclude={"active"})
+    wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
+    wandb_config['seed'] = args.seed
+    wandb.init(config=wandb_config)
 
     # create the validater and tester
     validator = Evaluator(trainer.unwrapped_model)
@@ -261,12 +338,7 @@ def main():
         )
 
     # run training
-    trainer.run(
-        data=train_loader,
-        max_epochs=args.epochs, 
-        epoch_length=args.epoch_length,
-        min_epoch_length=args.min_epoch_length
-    )
+    trainer.run(train_loader, **config.trainer.run_kwargs)
    
 if __name__ == '__main__':
     main() 

@@ -2,15 +2,11 @@ import os
 import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
-# datasets and transformers
-import datasets
-from transformers import AutoTokenizer
 # import active learning components
+from active.core import strategies
 from active.core.loop import ActiveLoop
-from active.core.strategies import *
 from active.core.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from active.helpers.engine import ActiveLearningEvents, ActiveLearningEngine
-from active.helpers.trainer import Trainer
 from active.helpers.evaluator import Evaluator
 from active.core.utils.model import get_encoder_from_model
 # import ignite
@@ -21,109 +17,12 @@ from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from sklearn.manifold import TSNE
 # others
 import wandb
+import transformers
+from math import ceil
+from pydantic import BaseModel, validator
 from matplotlib import pyplot as plt
-# helper functions
-from active.scripts.run_train import (
-    load_and_preprocess_datasets,
-    create_trainer,
-    attach_metrics
-)
-# argparse helpers
-from typing import Literal
-from defparse import Ignore
-
-
-#
-# Build Strategy and AL-Engine
-#
-
-def build_strategy(model, strategy, task):
-    if strategy == 'random': return Random()
-    elif strategy == 'least-confidence': return LeastConfidence(model)
-    elif strategy == 'prediction-entropy': return PredictionEntropy(model)
-    elif strategy == 'badge' and task == 'sequence':
-        return BadgeForSequenceClassification(get_encoder_from_model(model), model.classifier)
-    elif strategy == 'badge' and task == 'token':
-        return BadgeForTokenClassification(get_encoder_from_model(model), model.classifier)
-    elif strategy == 'alps': return AlpsConstantEmbeddings(model, mlm_prob=0.15)
-    elif strategy == 'egl': return EglByTopK(model, k=5)
-    elif strategy == 'egl-sampling': return EglBySampling(model, k=8)
-    elif strategy == 'entropy-over-max': return EntropyOverMax(model)
-    elif strategy == 'entropy-over-max-ignore': return EntropyOverMax(model, ignore_labels=[0])
-    elif strategy == 'entropy-over-max-sample': return EntropyOverMax(model, random_sample=True)
-
-def create_engine_and_loop(
-    trainer:Ignore[Trainer],
-    pool:Ignore[Dataset],
-    # strategy
-    task:Literal["token", "sequence"] ="token",
-    strategy:str ="random",
-    query_size:int =25,
-    # engine run args
-    steps:int =-1,
-    # trainer run args
-    epochs:int =50,
-    epoch_length:int =None,
-    min_epoch_length:int =16,
-    batch_size:int =64
-):
-    """ Build the Active Learning Engine and Loop
-
-        Args:
-            trainer (Trainer): trainer instance to use
-            pool (Dataset): unlabeled pool dataset
-            task (str):
-                The learning task to solve. Either `sequence` or 
-                `token` classification.
-            strategy (str): Active Learning Strategy to use
-            steps (int): 
-                number of Active Learning Steps. Defaults to -1
-                meaning the whole pool of data will be processed.
-            query_size (int): 
-                Number of data points to query from pool at each AL step
-            epochs (int):
-                Maximum number of epochs to run the trainer.
-            epoch_length (int):
-                Number of update steps of a single epochs.
-            min_epoch_length (int):
-                Minimum number of update steps of a single epoch.
-            batch_size (int):
-                Batch size to use during training and evaluation.
-
-        Returns:
-            engine (ActiveLearningEngine): active learning engine instance
-            loop (ActiveLoop): active learning loop instance
-    """
-    # create strategy and attach progress bar to strategy
-    strategy = build_strategy(trainer.unwrapped_model, strategy, task)
-    # create active learning loop
-    loop = ActiveLoop(
-        pool=pool,
-        strategy=strategy,
-        batch_size=batch_size,
-        query_size=query_size,
-        init_strategy=strategy if isinstance(strategy, Alps) else Random()
-    )
-
-    # create active learning engine
-    al_engine = ActiveLearningEngine(
-        trainer=trainer,
-        trainer_run_kwargs=dict(
-            max_epochs=epochs,
-            epoch_length=epoch_length,
-            min_epoch_length=min_epoch_length
-        ),
-        train_batch_size=batch_size,
-        eval_batch_size=batch_size,
-        train_val_ratio=0.9
-    )
-
-    # return engine and loop
-    return al_engine, loop
-
-#
-# Visualization
-#
+# base config and helper function
+from active.scripts.run_train import Task, ExperimentConfig, attach_metrics
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool
@@ -149,40 +48,107 @@ def visualize_embeds(strategy):
     # return axes and figure
     return ax, fig
 
+class ActiveLearningConfig(BaseModel):
+    """ Active Learning Configuration Model """
+    task:Task =None
+    # strategy to use
+    strategy:str
+    # budget and query size
+    budget:int
+    query_size:int
+
+    @property
+    def num_steps(self):
+        return ceil(self.budget / self.query_size)
+
+    def build_strategy(self, model:transformers.PreTrainedModel) -> strategies.AbstractStrategy:    
+        if self.strategy == 'random':
+            return strategies.Random()
+        elif self.strategy == 'least-confidence':
+            return strategies.LeastConfidence(model)
+        elif self.strategy == 'prediction-entropy':
+            return strategies.PredictionEntropy(model)
+        elif self.strategy == 'badge' and self.task == Task.SEQUENCE:
+            return strategies.BadgeForSequenceClassification(
+                get_encoder_from_model(model), 
+                model.classifier
+            )
+        elif self.strategy == 'badge' and self.task is Task.BIO_TAGGING:
+            return strategies.BadgeForTokenClassification(
+                get_encoder_from_model(model), 
+                model.classifier
+            )
+        elif self.strategy == 'alps':
+            return strategies.AlpsConstantEmbeddings(model, mlm_prob=0.15)
+        elif self.strategy == 'egl':
+            return strategies.EglByTopK(model, k=5)
+        elif self.strategy == 'egl-sampling':
+            return strategies.EglBySampling(model, k=8)
+        elif self.strategy == 'entropy-over-max':
+            return strategies.EntropyOverMax(model)
+        elif self.strategy == 'entropy-over-max-ignore':
+            return strategies.EntropyOverMax(model, ignore_labels=[0])
+        elif self.strategy == 'entropy-over-max-sample':
+            return strategies.EntropyOverMax(model, random_sample=True)
+
+        raise ValueError("Unrecognized strategy: %s" % self.strategy)
+
+class AlExperimentConfig(ExperimentConfig):
+    """ Active Learning Experiment Configuration """
+
+    # add active learning config to experiment config
+    active:ActiveLearningConfig
+
+    @validator('active', pre=True)
+    def _pass_task_to_active_config(cls, v, values):
+        assert 'task' in values
+        if isinstance(v, BaseModel):
+            return v.copy(update={'task': values.get('task')})
+        elif isinstance(v, dict):
+            return v | {'task': values.get('task')}
+
 def main():
-    from defparse import ArgumentParser
+
+    from argparse import ArgumentParser
     # build argument parser
-    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks using active learning.")
+    parser = ArgumentParser(description="Train transformer model on sequence or bio-taging classification tasks using active learning.")
     # add arguments
-    build_datasets = parser.add_args_from_callable(load_and_preprocess_datasets, group="Dataset Arguments")
-    build_trainer = parser.add_args_from_callable(create_trainer, group="Trainer Arguments")
-    build_engine_and_loop = parser.add_args_from_callable(create_engine_and_loop, group="Active Learning Arguments")
+    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
+    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
+    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
+    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
+    parser.add_argument("--strategy", type=str, default=None, help="Overwrite strategy specified in config")
+    parser.add_argument("--budget", type=int, default=None, help="Overwrite budget specified in config")
+    parser.add_argument("--query-size", type=int, default=None, help="Overwrite query size specified in config")
     # parse arguments
     args = parser.parse_args()
 
-    # build datasets
-    tokenizer = AutoTokenizer.from_pretrained(args.pretrained_ckpt)
-    ds = build_datasets()
+    # set random seed
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
-    config = vars(args)
-    config['dataset'] = ds['train'].info.builder_name
-    # initialize wandb, project and run name are set
-    # as environment variables (see `experiments/run-active.sh`)
-    wandb.init(config=config)
+    # parse configuration and apply overwrites
+    config = AlExperimentConfig.parse_file(args.config)
+    config.active.strategy = args.strategy or config.active.strategy
+    config.active.budget = args.budget or config.active.budget
+    config.active.query_size = args.query_size or config.active.query_size
+    print("Config:", config.json(indent=2))
+
+    # load datasets
+    ds = config.load_dataset(use_cache=args.use_cache)
     
-    # build engine and loop
-    al_engine, loop = build_engine_and_loop(
-        trainer=build_trainer(),
-        pool=ds['train']
-    )
-    
+    # keep tokenizer around as it is used in event handler
+    tokenizer = config.model.tokenizer
+    # load model and build strategy
+    model = config.load_model()
+    strategy = config.active.build_strategy(model)
     # attach progress bar to strategy
-    ProgressBar(ascii=True, desc='Strategy').attach(loop.strategy)
+    ProgressBar(ascii=True, desc='Strategy').attach(strategy)
     
-    # get trainer and create validater and tester
-    trainer = al_engine.trainer
-    validator = Evaluator(trainer.unwrapped_model)
-    tester = Evaluator(trainer.unwrapped_model)
+    # create trainer, validator and tester engines
+    trainer = config.trainer.build_trainer(model) 
+    validator = Evaluator(model)
+    tester = Evaluator(model)
     # attach metrics
     attach_metrics(trainer, tag="train")
     attach_metrics(validator, tag="val")
@@ -194,10 +160,27 @@ def main():
     # attach confusion matrix metric to tester
     # needed for some active learning metrics
     ConfusionMatrix(
-        num_classes=trainer.unwrapped_model.config.num_labels,
+        num_classes=len(config.data.label_space),
         output_transform=tester.get_logits_and_labels
     ).attach(tester, "cm")
 
+    # create active learning loop
+    loop = ActiveLoop(
+        pool=ds['train'],
+        strategy=strategy,
+        batch_size=config.trainer.batch_size,
+        query_size=config.active.query_size,
+        init_strategy=strategy if isinstance(strategy, strategies.Alps) else strategies.Random()
+    )
+    # create active learning engine
+    al_engine = ActiveLearningEngine(
+        trainer=trainer,
+        trainer_run_kwargs=config.trainer.run_kwargs,
+        train_batch_size=config.trainer.batch_size,
+        eval_batch_size=config.trainer.batch_size,
+        train_val_ratio=0.9
+    )
+    
     @al_engine.on(Events.ITERATION_STARTED)
     def on_started(engine):
         # log active learning step
@@ -274,8 +257,14 @@ def main():
     wss.attach(al_engine, "test/wss")
     area.attach(al_engine, "test/Area(F)")
 
+    # initialize wandb
+    wandb_config = config.dict()
+    wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
+    wandb_config['seed'] = args.seed
+    wandb.init(config=wandb_config)
+
     # run active learning experiment
-    state = al_engine.run(loop, steps=args.steps)
+    state = al_engine.run(loop, steps=config.active.num_steps)
     print("Active Learning Metrics:", state.metrics)
     # log active learning metric scores
     wandb.run.summary.update(state.metrics)
