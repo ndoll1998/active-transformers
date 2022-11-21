@@ -1,0 +1,36 @@
+{
+    "name": "ncbi",
+    "task": "bio-tagging",
+
+    "data": {
+        "dataset": "ncbi_disease",
+        "text_column": "tokens",
+        "label_column": "ner_tags",
+        "begin_tag_prefix": "",
+        "in_tag_prefix": "",
+        "min_sequence_length": 0,
+        "max_sequence_length": 64
+    },
+    
+    "model": {
+        "pretrained_ckpt": "distilbert-base-uncased"
+    },
+    
+    "trainer": {
+        "incremental": true,
+        "lr": 2e-5,
+        "weight_decay": 0.01,
+        "batch_size": 32,
+        "max_epochs": 50,
+        "epoch_length": null,
+        "min_epoch_length": 16,
+        "early_stopping_patience": 15,
+        "accuracy_threshold": 2.0
+    },
+
+    "active": {
+        "strategy": "random",
+        "budget": 250,
+        "query_size": 25
+    }
+}

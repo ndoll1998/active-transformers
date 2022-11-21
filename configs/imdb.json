@@ -1,0 +1,34 @@
+{
+    "name": "imdb",
+    "task": "sequence",
+
+    "data": {
+        "dataset": "imdb",
+        "text_column": "text",
+        "label_column": "label",
+        "min_sequence_length": 0,
+        "max_sequence_length": 128
+    },
+    
+    "model": {
+        "pretrained_ckpt": "distilbert-base-uncased"
+    },
+    
+    "trainer": {
+        "incremental": true,
+        "lr": 2e-5,
+        "weight_decay": 0.01,
+        "batch_size": 64,
+        "max_epochs": 15,
+        "epoch_length": null,
+        "min_epoch_length": 16,
+        "early_stopping_patience": 5,
+        "accuracy_threshold": 2.0
+    },
+
+    "active": {
+        "strategy": "random",
+        "budget": 250,
+        "query_size": 25
+    }
+}
