@@ -1,0 +1,430 @@
+from __future__ import annotations
+import os
+# ray
+import ray
+from ray.tune import Tuner
+from ray.air import RunConfig
+from ray.air.callbacks.wandb import WandbLoggerCallback
+# active
+from active import helpers
+from active import strategies
+from active.rl import stream
+from active.rl import extractors
+# reward metric and evaluator (only used for output transform)
+from ignite.metrics import Fbeta
+from active.helpers.evaluator import Evaluator
+# callbacks
+from ray.rllib.algorithms.callbacks import MultiCallbacks
+from active.rl.callbacks import (
+    CustomMetricsFromEnvCallbacks,
+    LoggingCallbacks
+)
+# configs
+from active.scripts.run_train import Task, ModelConfig
+from active.scripts.run_active import AlExperimentConfig
+# others
+import gym
+from enum import Enum
+from pydantic import BaseModel, validator
+from typing import Type, List, Dict, Any, Union
+
+def load_model_and_policy_pool_data(
+    experiment:AlExperimentConfig,
+    policy:FeatureExtractorConfig
+):
+    """ Helper function to load and preprocess pool datasets
+        Note that this is non-trivial as the pool dataset has
+        to be prepared for both the model and the policy's
+        feature extractor while keeping the index-relationship
+        between items (i.e. policy_pool[i] ~ model_pool[i]).
+    """
+    # get model and policy tokenizer
+    model_tokenizer = experiment.model.tokenizer
+    policy_tokenizer = policy.tokenizer
+    # pad token ids
+    model_pad_token_id = model_tokenizer.pad_token_id
+    policy_pad_token_id = policy_tokenizer.pad_token_id   
+
+    # disable filtering in data processing as this might lead to
+    # differences in the model vs policy dataset
+    model_data = experiment.data.copy(update={'min_sequence_length': 0})
+    # create policy data config by updating only the maximum
+    # sequence length but keeping minimum sequence length of zero set above
+    policy_data = model_data.copy(update={'max_sequence_length': policy.max_sequence_length})
+
+    # load and preprocess pool datasets
+    model_pool = model_data.load_dataset(model_tokenizer, split={'pool': 'train'})['pool']
+    policy_pool = policy_data.load_dataset(policy_tokenizer, split={'pool': 'train'})['pool']
+
+    # undo type formatting to allow combining the datasets
+    model_pool.set_format()
+    policy_pool.set_format()
+    # build combined dataset for filtering
+    combined_pool = model_pool \
+        .add_column('policy_input_ids', policy_pool['input_ids']) \
+        .add_column('policy_attention_mask', policy_pool['attention_mask']) \
+        .add_column('policy_labels', policy_pool['labels'])
+    # use numpy arrays for filtering
+    combined_pool.set_format(type='np')
+    # make sure all pools are of the same size
+    assert len(model_pool) == len(combined_pool) == len(policy_pool)
+    
+    # filter
+    filter_ = lambda e: ((e['input_ids'] != model_pad_token_id).sum() > experiment.data.min_sequence_length) or \
+        ((e['policy_input_ids'] != policy_pad_token_id).sum() > policy.min_sequence_length)
+    combined_pool.filter(filter_, batched=False, desc='Filter')
+    # split combined dataset back into model and policy datasets
+    model_pool = combined_pool.remove_columns(['policy_input_ids', 'policy_attention_mask', 'policy_labels'])
+    policy_pool = combined_pool.remove_columns(['input_ids', 'attention_mask', 'labels']) \
+        .rename_column('policy_input_ids', 'input_ids') \
+        .rename_column('policy_attention_mask', 'attention_mask') \
+        .rename_column('policy_labels', 'labels')
+
+    # set formats
+    model_pool.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    policy_pool.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
+    # return pool datasets
+    return model_pool, policy_pool
+    
+class RayStreamBasedEnv(stream.env.StreamBasedEnv):
+    """ Stream-based environment slightly modified to be
+        compatible with ray.rllib 
+
+        Main changes to the default stream-based env are:
+
+            (1): `__init__` expects a dictionary containing an experiment configuration
+                 and a feature-extractor configuration instance
+            (2): model and data loading/preparation are delayed until first
+                 call of `reset` to avoid overhead of driver copy
+                 (see `Expensive Environments` at https://docs.ray.io/en/latest/rllib/rllib-env.html)
+    """
+
+    def __init__(self, env_config):
+        self._is_initialized = False
+        # save configs for initialization in reset
+        self.experiment = env_config['experiment']
+        self.feature_extractor = env_config['feature_extractor']
+        # dummy initialize environment, set low-resource values
+        # expecially those needed for the observation space
+        super(RayStreamBasedEnv, self).__init__(
+            # budget will be upper bounded by pool size which is zero
+            # has to be set in reset
+            budget=0,
+            # pass low-resource arguments
+            query_size=self.experiment.active.query_size,
+            metric=Fbeta(beta=1, output_transform=Evaluator.get_logits_and_labels),
+            # engine and strategy are resource heavy as they need depend on the model
+            engine=None,
+            query_strategy=None,
+            # data is obviously resource heavy :)
+            policy_pool_data=[],
+            model_pool_data=[],
+            model_test_data=[],
+            # as data is not given the layout needs to be set explicitly
+            policy_sequence_length=self.feature_extractor.max_sequence_length,
+            model_sequence_length=self.experiment.data.max_sequence_length,
+            # TODO: use the maximum number of labels over all experiment/data setups
+            max_num_labels=len(self.experiment.data.label_space)
+        )
+
+    def reset(self):
+
+        # initialize on first call
+        if not self._is_initialized:
+            # get the observation space before initialization
+            obs_space = self.observation_space
+            # load the pool datasets
+            model_pool_data, policy_pool_data = load_model_and_policy_pool_data(
+                experiment=self.experiment,
+                policy=self.feature_extractor
+            )
+            # load the model test data
+            # compared to the pool data this is easy as only
+            # the model needs has access to the test dataset
+            model_test_data = self.experiment.load_dataset(split={'test': 'test'})['test']
+            # re-initialize with actual values
+            super(RayStreamBasedEnv, self).__init__(
+                # now budget can be set since the
+                # pool datasets are also provided
+                budget=self.experiment.active.budget,
+                # these are unchanged
+                query_size=self.state.query_size,
+                metric=self.metric,
+                # build active learning engine
+                engine=helpers.engine.ActiveLearningEngine(
+                    trainer=self.experiment.build_trainer(),
+                    trainer_run_kwargs=self.experiment.trainer.run_kwargs,
+                    train_batch_size=self.experiment.trainer.batch_size,
+                    eval_batch_size=self.experiment.trainer.batch_size,
+                    train_val_ratio=0.9
+                ),
+                # set query strategy
+                query_strategy=strategies.Random(),
+                # pass the preprocessed datasets
+                policy_pool_data=policy_pool_data,
+                model_pool_data=model_pool_data,
+                model_test_data=model_test_data,
+                # keep these values around to make sure the
+                # observation space doesn't change due to re-initialization
+                policy_sequence_length=self.feature_extractor.max_sequence_length,
+                model_sequence_length=self.experiment.data.max_sequence_length,
+                # TODO: use the maximum number of labels over all experiment/data setups
+                max_num_labels=len(self.experiment.data.label_space)
+            )
+            # make sure the observation spaces match
+            assert obs_space == self.observation_space, "Detected change in observation space after environment initialization"
+            # mark as initialized
+            self._is_initialized = True
+
+        # reset
+        return super(RayStreamBasedEnv, self).reset()
+
+class Approach(Enum):
+    """ Enum defining supported active learning approaches: 
+            (1) stream:
+                data is presented to the strategy/agent as a stream.
+                Agent decides whether to annoate or to dicard datapoints.
+            (2) pool:
+                data is presented to strategy/agent as pool.
+                Agent selects subset to annotate next.
+    """
+    STREAM = 'stream'
+    POOL = 'pool'
+
+    @property
+    def env_type(self) -> Type[gym.Env]:
+        if self == Approach.STREAM:
+            return RayStreamBasedEnv
+        elif self == Approach.POOL:
+            raise NotImplementedError()
+
+class FeatureExtractor(Enum):
+    """ Enum defining supported feature extractors:
+            (1) transformer:
+                simple transformer model as feature extractor.
+                Only uses input sequence and does not depend on model output.
+    """
+    TRANSFORMER = 'transformer'
+
+    @property
+    def type(self) -> Type[extractors.FeatureExtractor]:
+        if self is FeatureExtractor.TRANSFORMER:
+            return extractors.TransformerFeatureExtractor        
+
+class Algorithm(Enum):
+    """ Enum defining supported algorithms:
+            (1) dqn: Deep-Q-Network
+    """
+    DQN = "dqn"
+    PPO = "ppo"
+
+    @property
+    def type(self) -> Type[ray.rllib.algorithms.Algorithm]:
+        if self is Algorithm.DQN:
+            from ray.rllib.algorithms.dqn import DQN
+            return DQN
+        if self is Algorithm.PPO:
+            from ray.rllib.algorithms.ppo import PPO
+            return PPO
+
+class Model(Enum):
+    """ Enum definig supported models:
+            (1) stream/dqn-model: simple Deep-Q-Learning Model for stream-based approach
+    """
+    STREAM_DQN_MODEL = "stream/dqn-model"
+
+    @property
+    def type(self) -> Type[ray.rllib.models.torch.torch_modelv2.TorchModelV2]:
+        if self is Model.STREAM_DQN_MODEL:
+            return stream.model.DQNModel
+
+class FeatureExtractorConfig(ModelConfig):
+    """ Feature Extractor Configuration Model """
+    # task must be bio tagging
+    task:Task =Task.BIO_TAGGING
+
+    # feature extractor type used by policy
+    feature_extractor_type:FeatureExtractor
+    # sequence length
+    max_sequence_length:int
+    min_sequence_length:int
+
+    @property
+    def model_config(self) -> Dict[str, Any]:
+        return {
+            'feature_extractor_type': self.feature_extractor_type.type,
+            'feature_extractor_config': {
+                'pretrained_ckpt': self.pretrained_ckpt
+            }
+        }
+
+class AlgorithmConfig(BaseModel):
+    """ Algorithm Configuration Model"""
+    # algorithm to use and algorithm specific parameters
+    algo:Algorithm
+    algo_config:Dict[str, Any]
+    # general algorithm config
+    rollout_fragment_length:int
+    train_batch_size:int
+
+    # convergence criteria
+    max_timesteps:int
+
+    @property
+    def ray_config(self) -> Dict[str, Any]:
+        return {
+            "rollout_fragment_length": self.rollout_fragment_length,
+            "train_batch_size": self.train_batch_size,
+            **self.algo_config
+        }
+
+class WorkersConfig(BaseModel):
+    """ Workers Configuration Model """
+    num_workers:int
+    num_gpus_per_worker:float
+    num_envs_per_worker:int
+    remote_worker_envs:bool =False
+
+    @property
+    def ray_config(self) -> Dict[str, Any]:
+        return self.dict()
+
+def parse_experiment_config(cls, value) -> AlExperimentConfig:
+    # check if value is a config instance
+    if isinstance(value, AlExperimentConfig):
+        return value
+    # otherwise it should be a path to a valid config
+    if not os.path.isfile(value):
+        raise ValueError("Experiment configuration file not found: %s" % value)
+    # try to load the config
+    return AlExperimentConfig.parse_file(value)
+    
+class EvaluationConfig(BaseModel):
+    """ Evaluation Configuration Model """
+    # passed from RlExperiment
+    _feature_extractor:FeatureExtractor =None
+    # basic evaluation setup
+    evaluation_interval:int
+    evaluation_duration:int
+    evaluation_num_workers:int
+    # evaluation environemt
+    env_config:Union[str, AlExperimentConfig]
+
+    # validator to parse config
+    _parse_env_config = validator('env_config', allow_reuse=True)(parse_experiment_config)
+
+    @property
+    def ray_config(self) -> Dict[str, Any]:
+        return {
+            # basic evaluation settings
+            "evaluation_interval": self.evaluation_interval,
+            "evaluation_duration": self.evaluation_duration,
+            "evaluation_num_workers": self.evaluation_num_workers,
+            # set evaluation environment
+            "evaluation_config": {
+                "env_config": {
+                    "experiment": self.env_config,
+                    "feature_extractor": self._feature_extractor
+                }
+            }
+        }
+
+class RlExperimentConfig(BaseModel):
+    """ Reinforcement Learning Experiment Configuration Model"""
+    # approach to use
+    approach:Approach
+    # algorithm and worker setup
+    algorithm:AlgorithmConfig
+    workers:WorkersConfig
+    
+    # model config
+    model_type:Model
+    feature_extractor:FeatureExtractorConfig
+    # experiments -> environment setups
+    env_configs:List[Union[str, AlExperimentConfig]]    
+
+    # evaluation config
+    evaluation:EvaluationConfig
+
+    # validator to parse configs
+    _parse_env_configs = validator('env_configs', each_item=True, allow_reuse=True)(parse_experiment_config)
+
+    @validator('evaluation')
+    def _pass_feature_extractor_to_evaluation(cls, value, values):
+        assert 'feature_extractor' in values
+        if isinstance(value, BaseModel):
+            return value.copy(update={'_feature_extractor': values.get('feature_extractor')})
+        elif isinstance(value, dict):
+            return value | {'_feature_extractor': values.get('feature_extractor')}
+
+    @property
+    def ray_config(self) -> Dict[str, Any]:
+        return {
+            # set framework to use
+            "framework": "torch",
+            # specify model
+            "model": {
+                "custom_model": self.model_type.type,
+                "custom_model_config": self.feature_extractor.model_config
+            },
+            # set up environments
+            "env": self.approach.env_type,
+            "env_config": {
+                "experiment": self.env_configs[0],
+                "feature_extractor": self.feature_extractor
+            },
+            # add configs from all sub-models
+            **self.algorithm.ray_config,
+            **self.workers.ray_config,
+            **self.evaluation.ray_config,
+        }
+
+if __name__ == '__main__':
+
+    from argparse import ArgumentParser
+    # build argument parser
+    parser = ArgumentParser()
+    parser.add_argument("--config", type=str, required=True, help="Path to valid RL experiment config")
+    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
+    # parse arguments
+    args = parser.parse_args()
+
+    # parse configuration and apply overwrites
+    config = RlExperimentConfig.parse_file(args.config)    
+    print("Config:", config.json(indent=2))
+
+    # build ray config and add callbacks
+    ray_config = config.ray_config
+    ray_config['callbacks'] = MultiCallbacks([
+        CustomMetricsFromEnvCallbacks,
+        LoggingCallbacks
+    ])
+    ray_config['log_level'] = "INFO"
+
+    # connect to ray cluster
+    ray.init(address='auto')
+
+    # start training
+    Tuner(
+        config.algorithm.algo.type,
+        param_space=ray_config,
+        run_config=RunConfig(
+            # stop config
+            stop=dict(
+                timesteps_total=config.algorithm.max_timesteps,
+            ),
+            # setup wandb callback
+            callbacks=[
+                WandbLoggerCallback(
+                    project="rl-active-learning",
+                    group=None,
+                    log_config=False,
+                    save_checkpoints=False,
+                    config=config.dict()
+                )
+            ],
+            verbose=1
+        ),
+    ).fit()
+    # shutdown
+    ray.shutdown()
