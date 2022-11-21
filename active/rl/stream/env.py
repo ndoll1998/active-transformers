@@ -1,3 +1,4 @@
+from __future__ import annotations
 import gym
 import torch
 import numpy as np
@@ -134,7 +135,7 @@ class StreamBasedEnv(gym.Env):
         # initialize environment
         super(StreamBasedEnv, self).__init__()
         # check data pools
-        assert len(policy_pool_data) == len(model_pool_data), "Mismatch between data pools!"        
+        assert len(policy_pool_data) == len(model_pool_data), "Size mismatch between data pools!"
 
         # create state instance
         self.state = State(
@@ -158,7 +159,7 @@ class StreamBasedEnv(gym.Env):
 
         # specify data layout, i.e. the dimensions of the observation space
         self._policy_max_seq_len = policy_sequence_length or self._policy_seq_len
-        self._model_max_seq_len = model_sequence_length or self._policy_seq_len
+        self._model_max_seq_len = model_sequence_length or self._model_seq_len
         self._model_max_num_labels = max_num_labels or self._model_num_labels
 
     @property
@@ -175,9 +176,9 @@ class StreamBasedEnv(gym.Env):
 
     @property
     def _vocab_size(self) -> int:
-        # instead of actually checking the vocab size we just say the
+        # instead of actually checking the vocab size lets just say the
         # vocab size is the maximum number that can be represented by int64
-        # we use int64 since it matches the torch.long datatype
+        # use int64 since it matches the torch.long datatype
         return np.iinfo(np.int64).max
         
     @property
@@ -205,12 +206,18 @@ class StreamBasedEnv(gym.Env):
                 shape=(self._policy_max_seq_len,), 
                 dtype=np.int64
             ),
-            "attention_mask": gym.spaces.MultiBinary(self._policy_max_seq_len),
+            "attention_mask": gym.spaces.Box(
+                low=0,
+                high=1,
+                shape=(self._policy_max_seq_len,),
+                dtype=np.bool
+            ),
             # model predictions
             "logits": gym.spaces.Box(
                 low=-np.inf, 
                 high=np.inf, 
-                shape=(self._model_max_seq_len, self._model_max_num_labels)
+                shape=(self._model_max_seq_len, self._model_max_num_labels),
+                dtype=np.float32
             )
         })
 
@@ -356,3 +363,4 @@ class StreamBasedEnv(gym.Env):
 
         # return observation, reward, done and info
         return obs, reward, done, info
+
