@@ -379,8 +379,7 @@ class RlExperimentConfig(BaseModel):
             **self.evaluation.ray_config,
         }
 
-if __name__ == '__main__':
-
+def main():
     from argparse import ArgumentParser
     # build argument parser
     parser = ArgumentParser()
@@ -428,3 +427,6 @@ if __name__ == '__main__':
     ).fit()
     # shutdown
     ray.shutdown()
+
+if __name__ == '__main__':
+    main()
