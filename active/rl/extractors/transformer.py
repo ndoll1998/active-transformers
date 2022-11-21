@@ -25,10 +25,10 @@ class TransformerFeatureExtractor(FeatureExtractor):
         input_ids = input_dict['obs']['input_ids'].long()
         attention_mask = input_dict['obs']['attention_mask'].long()
 
-        # avoid invalid attention mask of all zeros this seems to
+        # avoid invalid attention mask of all zeros, this seems to
         # happend when the environment is checked before actual
-        # execution also this should make sense as the first token
-        # should always be the initial [CLS]
+        # execution, also this should make sense as the first token
+        # should always be the initial [CLS] special token
         attention_mask[:, 0] = 1
 
         # pass through transformer
