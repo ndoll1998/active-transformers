@@ -33,7 +33,7 @@ setup(
         "scikit-learn>=1.1.1",
         "scipy>=1.9.0",
         "matplotlib>=3.5.2",
-        "defparse>=0.1.2",
+        "pydantic>=1.10.2",
         "ray[default]>=2.1.0"
     ],
     extras_require={
@@ -45,9 +45,7 @@ setup(
         "console_scripts": [
             "active.train = active.scripts.run_train:main",
             "active.active = active.scripts.run_active:main",
-            "active.rl.dqn-server = active.scripts.rl.dqn_server:main",
-            "active.rl.ppo-server = active.scripts.rl.ppo_server:main",
-            "active.rl.client = active.scripts.rl.client:main"
+            "active.rl = active.scripts.run_rl_active:main"
         ]
     }
 ) 
