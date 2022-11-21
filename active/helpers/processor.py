@@ -1,103 +1,120 @@
-import datasets
-import numpy as np
+import torch
 from transformers import PreTrainedTokenizer
-from functools import lru_cache
-from itertools import chain
+from typing import List
 
-class TokenClassificationProcessor(object):
+class SequenceClassificationProcessor(object):
+
+    def __init__(
+        self, 
+        tokenizer:PreTrainedTokenizer,
+        max_length:int,
+        text_column:str,
+        label_column:str,
+        **kwargs
+    ) -> None:
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.text_column = text_column
+        self.label_column = label_column
+
+    def __call__(self, example):
+        return self.tokenizer(
+            text=example[self.text_column],
+            max_length=self.max_length,
+            truncation=True,
+            padding='max_length',
+            return_token_type_ids=False,
+        ) | {'labels': example[self.label_column]}
+
+
+class BioTaggingProcessor(object):
 
     def __init__(
         self,
         tokenizer:PreTrainedTokenizer,
-        dataset_info:datasets.DatasetInfo,
-        tags_field:str,
         max_length:int,
-        tag_pad_token_id:int =-100
+        text_column:str,
+        label_column:str,
+        label_space:List[str],
+        begin_tag_prefix:str,
+        in_tag_prefix:int
     ) -> None:
         self.tokenizer = tokenizer
-        self.dataset_info = dataset_info
         self.max_length = max_length
-        self.tags_field = tags_field
-        self.tag_pad_token_id = tag_pad_token_id
+        self.text_column = text_column
+        self.label_column = label_column
+       
+        # map label to id
+        label2id = dict(zip(label_space, range(len(label_space))))
+        # map begin/in tags to corresponding entities
+        begin_tags = {tag: tag.lstrip(begin_tag_prefix) for tag in label_space if tag.startswith(begin_tag_prefix)}
+        in_tags = {tag: tag.lstrip(in_tag_prefix) for tag in label_space if tag.startswith(in_tag_prefix)}
+        # make sure there is a in-tag for each begin-tag and vise versa
+        assert set(begin_tags.values()) == set(in_tags.values())
+        # make sure corresponding begin- and in-tags reference the same entity
+        assert all(entity == in_tags[tag] for tag, entity in in_tags.items())
 
-    @property
-    def num_labels(self) -> int:
-        return len(self.dataset_info.features[self.tags_field].feature.names)
+        # map begin- to corresponding in-tag
+        begin2in = {tag: in_tag_prefix + entity for tag, entity in begin_tags.items()}
+        begin2in = [begin2in.get(tag, tag) for tag in label_space]
+        begin2in = [label2id[tag] for tag in begin2in]
+        # convert to tensor
+        # this tensor maps the label-id of begin-tags to the label-id of the
+        # corresponding in-tags. Label-ids of non-begin-tags remain untouched.
+        # Examples:
+        #    - begin2in[label2id["B-ORG"]] = label2id["I-ORG"]
+        #    - begin2in[label2id["I-ORG"]] = label2id["I-ORG"]
+        self.begin2in = torch.LongTensor(begin2in)
 
-    @property
-    @lru_cache()
-    def begin2in(self) -> dict:
-        # get bio labels and extract classes from it
-        bio = self.dataset_info.features[self.tags_field].feature
-        # check label scheme
-        if all(label[:2] in ["O", "O-", "B-", "I-"] for label in bio.names):
-            # begin-in marked by 'B-' and 'I-'
-            classes = set([label[2:] for label in bio.names if len(label) > 2])
-            # map begin label-id to in label-id per class
-            return {bio.str2int("B-%s" % c): bio.str2int("I-%s" % c) for c in classes}
+        # check tokenizer is fast
+        if not tokenizer.is_fast:
+            raise ValueError("Bio tagging processor needs fast pretrained tokenizer but got %s" % type(tokenizer).__name__)
+
+    def __call__(self, example):
         
-        # fallback use identity
-        return {i: i for i, _ in enumerate(bio.names)}
-
-    @property
-    @lru_cache()
-    def in2begin(self) -> dict:
-        # reverse begin-to-in mapping
-        return {i:b for b, i in self.begin2in.items()}
-
-    @property
-    def out_tag(self) -> int:
-        # TODO: extract out tag from dataset info
-        # currently assumes out tag to be zero
-        return 0
-
-    def __call__(self, item:dict) -> dict:
-
-        # tokenize to find number of wordpieces per token
-        n_subtokens = [len(self.tokenizer.tokenize(token)) for token in item['tokens']]
-        
-        # cleanup tags
-        tags = [
-            # continue a previous entity if
-            self.begin2in.get(tag, tag) if prev_tag in [
-                self.begin2in.get(tag, tag), # the previous tag must be the
-                self.in2begin.get(tag, tag)  # corresponding being or in tag
-            # or start a new entity
-            ] else self.in2begin.get(tag, tag)
-            for prev_tag, tag in zip(
-                [self.out_tag] + item[self.tags_field][:-1], 
-                item[self.tags_field]
-            )
-        ]
-
-        # build bio tags on sub-token level
-        tags = [
-            [tag] + [self.begin2in.get(tag, tag)] * (n - 1) 
-            for tag, n in zip(item[self.tags_field], n_subtokens)
-        ]
-        # concatenate sub-token tags
-        tags = list(chain(*tags))
-        
-        # build input ids and attention mask
-        encoding = self.tokenizer.encode_plus(
-            text=item['tokens'], 
-            add_special_tokens=True, 
-            padding='max_length', 
-            truncation=True, 
-            max_length=self.max_length,
+        # tokenize
+        enc = self.tokenizer(
+            text=example[self.text_column],
+            add_special_tokens=True,
+            padding='max_length',
+            truncation=True,
             is_split_into_words=True,
+            max_length=self.max_length,
+            return_token_type_ids=False,
             return_attention_mask=True,
+            return_overflowing_tokens=False,
             return_special_tokens_mask=True
         )
 
-        valid_tokens_mask = ~np.asarray(encoding.special_tokens_mask, dtype=bool)
-        # build padded tags
-        padded_tags = np.full(self.max_length, self.tag_pad_token_id)
-        padded_tags[valid_tokens_mask] = tags[:valid_tokens_mask.sum()]
+        # extract special tokens mask from encoding
+        special_tokens_mask = torch.BoolTensor(enc.special_tokens_mask)
 
-        # return all features
+        # create word-ids tensor
+        word_ids = torch.LongTensor([i for i in enc.word_ids() if i is not None])
+        # create label-ids tensor and apply word-ids
+        label_ids = torch.LongTensor(example[self.label_column])
+        label_ids = label_ids[word_ids]
+
+        # find tokens marked that are begin-tag but split into
+        # word-pieces by tokenizer, only the first word-piece
+        # should be annotated with the begin-tag however
+        # the above assigns each wordpiece of the token
+        # the same tag
+        in_mask = (word_ids[:-1] == word_ids[1:])
+        # note: this actually marks all wordpieces of
+        # the same token except the first one no matter
+        # the tag, however only the begin tags are altered
+        # by the mapping below
+        label_ids[1:][in_mask] = self.begin2in[label_ids[1:][in_mask]]
+
+        # create the bio-tags which bascially are the
+        # label-ids above with padding for special tokens
+        bio_tags = torch.where(special_tokens_mask, -100, 0)
+        bio_tags[~special_tokens_mask] = label_ids
+ 
         return {
-            'input_ids': encoding.input_ids,
-            'attention_mask': encoding.attention_mask,
-            'labels': padded_tags.tolist()
+            'input_ids': torch.LongTensor(enc.input_ids),
+            'attention_mask': torch.LongTensor(enc.attention_mask),
+            'labels': bio_tags
         }
+
