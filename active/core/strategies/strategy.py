@@ -103,6 +103,18 @@ class AbstractStrategy(Engine, ABC):
         # set attribute
         self._indices = indices
         
+    def dataloader(self, data:Dataset, **kwargs) -> DataLoader:
+        """ Create the dataloader for a given dataset with some specific configuration.            
+
+            Args:
+                data (Dataset): dataset to use
+                **kwargs (Any): keyword arguments passed to the dataloader
+
+            Returns:
+                loader (DataLoader): dataloader from given dataset and configuration
+        """
+        return DataLoader(data, **kwargs)
+
     def query(
         self, 
         pool:Dataset,
@@ -122,7 +134,7 @@ class AbstractStrategy(Engine, ABC):
         # check query size
         assert query_size <= len(pool), "Query size (%i) larger than pool (%i)" % (query_size, len(pool))
         # create dataloader
-        loader = DataLoader(
+        loader = self.dataloader(
             pool,
             batch_size=batch_size,
             shuffle=False,

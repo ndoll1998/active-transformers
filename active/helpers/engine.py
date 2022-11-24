@@ -104,6 +104,18 @@ class ActiveLearningEngine(Engine):
         else:
             return self.train_dataset
 
+    def dataloader(self, data:Dataset, **kwargs) -> DataLoader:
+        """ Create the dataloader for a given dataset with some specific configuration.            
+
+            Args:
+                data (Dataset): dataset to use
+                **kwargs (Any): keyword arguments passed to the dataloader
+
+            Returns:
+                loader (DataLoader): dataloader from given dataset and configuration
+        """
+        return DataLoader(data, **kwargs)
+
     def _reset(self):
         """ Event handler to reset the engine, i.e. re-initialize the model,
             reset optimizer and scheduler states and clear the sampled datasets. 
@@ -144,8 +156,8 @@ class ActiveLearningEngine(Engine):
         self.fire_event(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
         
         # create dataloaders and update validation loader in trainer
-        train_loader = DataLoader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
-        self.trainer.val_loader = DataLoader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
+        train_loader = self.dataloader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
+        self.trainer.val_loader = self.dataloader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
         # run training
         self.trainer.run(train_loader, **self.trainer_run_kwargs)
 
