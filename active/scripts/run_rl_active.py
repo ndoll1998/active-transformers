@@ -90,41 +90,39 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
     """ Stream-based environment slightly modified to be
         compatible with ray.rllib 
 
-        Main changes to the default stream-based env are:
+        Main changes/features to the default stream-based env are:
 
-            (1): `__init__` expects a dictionary containing an experiment configuration
+            (1): `__init__` expects a dictionary containing all experiment configurations
                  and a feature-extractor configuration instance
-            (2): model and data loading/preparation are delayed until first
+            (2): the experiment configuration is selected by the worker index,
+                 i.e. all environments of the same worker run the same experiment
+            (3): model and data loading/preparation are delayed until first
                  call of `reset` to avoid overhead of driver copy
                  (see `Expensive Environments` at https://docs.ray.io/en/latest/rllib/rllib-env.html)
     """
 
     def __init__(self, env_config):
+        # flag to mark the environment as initialized
         self._is_initialized = False
-        # save configs for initialization in reset
-        self.experiment = env_config['experiment']
+        # save configs for actual initialization in reset
+        self.experiment = env_config['experiment_pool'][env_config.worker_index-1]
         self.feature_extractor = env_config['feature_extractor']
         # dummy initialize environment, set low-resource values
         # expecially those needed for the observation space
         super(RayStreamBasedEnv, self).__init__(
-            # budget will be upper bounded by pool size which is zero
-            # has to be set in reset
+            # pass dummy arguments
             budget=0,
-            # pass low-resource arguments
-            query_size=self.experiment.active.query_size,
-            metric=Fbeta(beta=1, output_transform=Evaluator.get_logits_and_labels),
-            # engine and strategy are resource heavy as they need depend on the model
+            query_size=0,
             engine=None,
             query_strategy=None,
-            # data is obviously resource heavy :)
             policy_pool_data=[],
             model_pool_data=[],
             model_test_data=[],
+            metric=None,
             # as data is not given the layout needs to be set explicitly
             policy_sequence_length=self.feature_extractor.max_sequence_length,
-            model_sequence_length=self.experiment.data.max_sequence_length,
-            # TODO: use the maximum number of labels over all experiment/data setups
-            max_num_labels=len(self.experiment.data.label_space)
+            model_sequence_length=env_config['model_max_sequence_length'],
+            max_num_labels=env_config['model_max_num_labels']
         )
 
     def reset(self):
@@ -144,12 +142,10 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
             model_test_data = self.experiment.load_dataset(split={'test': 'test'})['test']
             # re-initialize with actual values
             super(RayStreamBasedEnv, self).__init__(
-                # now budget can be set since the
-                # pool datasets are also provided
                 budget=self.experiment.active.budget,
-                # these are unchanged
-                query_size=self.state.query_size,
-                metric=self.metric,
+                query_size=self.experiment.active.query_size,
+                # keep metric
+                metric=Fbeta(beta=1, output_transform=Evaluator.get_logits_and_labels),
                 # build active learning engine
                 engine=helpers.engine.ActiveLearningEngine(
                     trainer=self.experiment.build_trainer(),
@@ -166,10 +162,9 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
                 model_test_data=model_test_data,
                 # keep these values around to make sure the
                 # observation space doesn't change due to re-initialization
-                policy_sequence_length=self.feature_extractor.max_sequence_length,
-                model_sequence_length=self.experiment.data.max_sequence_length,
-                # TODO: use the maximum number of labels over all experiment/data setups
-                max_num_labels=len(self.experiment.data.label_space)
+                policy_sequence_length=self._policy_seq_len,
+                model_sequence_length=self._model_max_seq_len,
+                max_num_labels=self._model_max_num_labels
             )
             # make sure the observation spaces match
             assert obs_space == self.observation_space, "Detected change in observation space after environment initialization"
@@ -266,6 +261,8 @@ class AlgorithmConfig(BaseModel):
     # general algorithm config
     rollout_fragment_length:int
     train_batch_size:int
+    # number gpus the algorithm has access to
+    num_gpus:int
 
     # convergence criteria
     max_timesteps:int
@@ -273,6 +270,7 @@ class AlgorithmConfig(BaseModel):
     @property
     def ray_config(self) -> Dict[str, Any]:
         return {
+            "num_gpus": self.num_gpus,
             "rollout_fragment_length": self.rollout_fragment_length,
             "train_batch_size": self.train_batch_size,
             **self.algo_config
@@ -296,9 +294,14 @@ def parse_experiment_config(cls, value) -> AlExperimentConfig:
     # otherwise it should be a path to a valid config
     if not os.path.isfile(value):
         raise ValueError("Experiment configuration file not found: %s" % value)
-    # try to load the config
-    return AlExperimentConfig.parse_file(value)
-    
+    # load the config
+    config = AlExperimentConfig.parse_file(value)
+    # only supports bio tagging tasks
+    if config.task is not Task.BIO_TAGGING:
+        raise ValueError("Currently only bio tagging tasks are supported")   
+    # return the loaded configuration
+    return config 
+
 class EvaluationConfig(BaseModel):
     """ Evaluation Configuration Model """
     # passed from RlExperiment
@@ -357,8 +360,27 @@ class RlExperimentConfig(BaseModel):
         elif isinstance(value, dict):
             return value | {'_feature_extractor': values.get('feature_extractor')}
 
+    @validator('env_configs')
+    def _check_one_env_config_per_worker(cls, v, values):
+        assert 'workers' in values
+        workers = values.get('workers')
+        # make sure env configs align with number of workers
+        if max(workers.num_workers, 1) != len(v):
+            raise ValueError(
+                "Must specify exactly one environment config (%i) per worker (%i)" % \
+                (len(v), max(1, workers.num_workers))
+            )
+        # return env configs
+        return v
+
     @property
     def ray_config(self) -> Dict[str, Any]:
+        # get model maximum sequence length and number of labels over all
+        # specified experiment configs including the evaluation experiment
+        all_env_configs = self.env_configs + [self.evaluation.env_config]
+        max_seq_length = max(config.data.max_sequence_length for config in all_env_configs)
+        max_num_labels = max(map(len, (config.data.label_space for config in all_env_configs)))
+        # build and return configuration
         return {
             # set framework to use
             "framework": "torch",
@@ -370,8 +392,10 @@ class RlExperimentConfig(BaseModel):
             # set up environments
             "env": self.approach.env_type,
             "env_config": {
-                "experiment": self.env_configs[0],
-                "feature_extractor": self.feature_extractor
+                "model_max_sequence_length": max_seq_length,
+                "model_max_num_labels": max_num_labels,
+                "feature_extractor": self.feature_extractor,
+                "experiment_pool": self.env_configs
             },
             # add configs from all sub-models
             **self.algorithm.ray_config,

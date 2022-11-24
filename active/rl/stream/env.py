@@ -1,4 +1,3 @@
-from __future__ import annotations
 import gym
 import torch
 import numpy as np
@@ -24,6 +23,7 @@ from torch.utils.data import (
 )
 # others
 from itertools import chain
+from functools import cached_property
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -158,20 +158,20 @@ class StreamBasedEnv(gym.Env):
         self.model_test_data = model_test_data
 
         # specify data layout, i.e. the dimensions of the observation space
-        self._policy_max_seq_len = policy_sequence_length or self._policy_seq_len
-        self._model_max_seq_len = model_sequence_length or self._model_seq_len
+        self._policy_seq_len = policy_sequence_length or len(self.policy_pool_data[0]['input_ids'])
+        self._model_max_seq_len = model_sequence_length or self._model_seq_length
         self._model_max_num_labels = max_num_labels or self._model_num_labels
 
-    @property
-    def _policy_seq_len(self) -> int:
-        return len(self.policy_pool_data[0]['input_ids'])
-
-    @property
-    def _model_seq_len(self) -> int:
+    @cached_property
+    def _model_seq_length(self) -> int:
         return len(self.model_pool_data[0]['input_ids'])
-    
-    @property
+
+    @cached_property
     def _model_num_labels(self) -> int:
+        """ Actual number of labels of prediction model.
+            Note that this may differ from the number of labels
+            in the observation space to support different datasets
+        """
         return self.engine.trainer.unwrapped_model.config.num_labels
 
     @property
@@ -203,13 +203,13 @@ class StreamBasedEnv(gym.Env):
             "input_ids": gym.spaces.Box(
                 low=0, 
                 high=self._vocab_size, 
-                shape=(self._policy_max_seq_len,), 
+                shape=(self._policy_seq_len,), 
                 dtype=np.int64
             ),
             "attention_mask": gym.spaces.Box(
                 low=0,
                 high=1,
-                shape=(self._policy_max_seq_len,),
+                shape=(self._policy_seq_len,),
                 dtype=np.bool
             ),
             # model predictions
@@ -218,6 +218,13 @@ class StreamBasedEnv(gym.Env):
                 high=np.inf, 
                 shape=(self._model_max_seq_len, self._model_max_num_labels),
                 dtype=np.float32
+            ),
+            # model predictions mask
+            "logits_mask": gym.spaces.Box(
+                low=0,
+                high=1,
+                shape=(self._model_max_seq_len, self._model_max_num_labels),
+                dtype=np.bool
             )
         })
 
@@ -247,6 +254,17 @@ class StreamBasedEnv(gym.Env):
         batch = default_collate_drop_labels(model_queue)
         logits = self.evaluator.step(batch).logits.cpu()
 
+        # expand logits to match expected number of labels in observation space
+        expand = torch.zeros((logits.size(0), logits.size(1), self._model_max_num_labels - self._model_num_labels))
+        logits = torch.cat((logits, expand), dim=2)
+        # also expand to match expected sequence length
+        expand = torch.zeros((logits.size(0), self._model_max_seq_len - logits.size(1), self._model_max_num_labels))
+        logits = torch.cat((logits, expand), dim=1)
+
+        # create logits mask
+        logits_mask = torch.zeros((self._model_max_seq_len, self._model_max_num_labels), dtype=bool)
+        logits_mask[:self._model_seq_length, :self._model_num_labels] = True
+
         # combine policy queue and model predictions
         # and write queues to state
         self.state.model_queue = list(model_queue)
@@ -254,7 +272,8 @@ class StreamBasedEnv(gym.Env):
             {
                 'input_ids': policy_item['input_ids'].numpy(),
                 'attention_mask': policy_item['attention_mask'].numpy(),
-                'logits': logits[i, ...].numpy()
+                'logits': logits[i, ...].numpy(),
+                'logits_mask': logits_mask.numpy()
             } for i, policy_item in enumerate(policy_queue)
         ]
         
