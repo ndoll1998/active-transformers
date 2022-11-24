@@ -26,8 +26,8 @@ from active.scripts.run_train import Task, ExperimentConfig, attach_metrics
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool
-    idx = loop.strategy.selected_indices
-    output = loop.strategy.output
+    idx = strategy.selected_indices
+    output = strategy.output
     output = output if output.ndim == 2 else \
         output.reshape(-1, 1) if output.ndim == 1 else \
         output.flatten(start_dim=1)
@@ -73,7 +73,7 @@ class ActiveLearningConfig(BaseModel):
                 get_encoder_from_model(model), 
                 model.classifier
             )
-        elif self.strategy == 'badge' and self.task is Task.BIO_TAGGING:
+        elif self.strategy == 'badge' and self.task in [Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING]:
             return strategies.BadgeForTokenClassification(
                 get_encoder_from_model(model), 
                 model.classifier
@@ -160,7 +160,9 @@ def main():
     # attach confusion matrix metric to tester
     # needed for some active learning metrics
     ConfusionMatrix(
-        num_classes=len(config.data.label_space),
+        # for nested bio tagging the label space is the entity
+        # types, however the confusion matrix is computed over B,I,O tags
+        num_classes=3 if config.task is Task.NESTED_BIO_TAGGING else len(config.data.label_space),
         output_transform=tester.get_logits_and_labels
     ).attach(tester, "cm")
 
@@ -222,10 +224,11 @@ def main():
 
         # run on test data
         test_metrics = tester.run(test_loader).metrics
-        print("Test Metrics:", test_metrics)
         # don't log test confusion matrix
         test_metrics = test_metrics.copy()
         test_metrics.pop('cm')
+        # print test metrics
+        print("Test Metrics:", test_metrics)
 
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]

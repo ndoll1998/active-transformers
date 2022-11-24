@@ -64,4 +64,4 @@ class Evaluator(Engine):
         """
         logits, labels = out['logits'], out['labels']
         mask = (labels >= 0)
-        return logits[mask], labels[mask]
+        return logits[mask, :], labels[mask]

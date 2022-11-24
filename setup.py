@@ -29,7 +29,7 @@ setup(
         "torch>=1.11.0",
         "pytorch-ignite>=0.4.9",
         "transformers>=4.19.2",
-        "datasets>=2.2.2",
+        "datasets>=2.7.1",
         "scikit-learn>=1.1.1",
         "scipy>=1.9.0",
         "matplotlib>=3.5.2",

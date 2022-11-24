@@ -6,8 +6,9 @@ from active.helpers.trainer import Trainer
 from active.helpers.evaluator import Evaluator
 # import data processors
 from active.helpers.processor import (
-    SequenceClassificationProcessor,
-    BioTaggingProcessor
+    BioTaggingProcessor,
+    NestedBioTaggingProcessor,
+    SequenceClassificationProcessor
 )
 # import ignite
 from ignite.engine import Events
@@ -36,6 +37,58 @@ def attach_metrics(engine, tag=None):
     P.attach(engine, 'P' if tag is None else ('%s/P' % tag))
     F.attach(engine, 'F' if tag is None else ('%s/F' % tag))
 
+class ForwardForNestedTokenClassification(transformers.PreTrainedModel):
+    """ Forward container class used by transformer models for nested token classification.
+        Has to be combined with a transformer model for token classification.
+    """
+
+    def forward(self, *args, **kwargs):
+        """ Forward function for nested token classification.
+            Based on forward for standard token classification.
+        
+            Output logits are of shape (B, S, E, 3) where B
+            is the batch size, S is the sequence length and
+            E is the number of classifiers/entities to predict.
+            The final dimension corresponds to BIO labeling scheme.    
+        """
+        # expects dictionary output
+        kwargs['return_dict'] = True
+        # pop labels from arguments if given
+        # to avoid loss-computation in parent
+        labels = kwargs.pop('labels') if 'labels' in kwargs else None
+        
+        # call forward transformer for token classification and reorganize logits
+        out = super(ForwardForNestedTokenClassification, self).forward(*args, **kwargs)
+        out['logits'] = out.logits.reshape(out.logits.size(0), out.logits.size(1), -1, 3)
+
+        # compute loss
+        if labels is not None:
+            out['loss'] = torch.nn.functional.cross_entropy(out.logits.reshape(-1, 3), labels.reshape(-1))
+        
+        # return output
+        return out 
+        
+class AutoModelForNestedTokenClassification(object):
+    
+    @staticmethod
+    def from_pretrained(pretrained_ckpt, **kwargs):
+        # re-interpret num labels as num entities
+        # for each entity introduce 3 labels (i.e. B,I,O)
+        kwargs['num_labels'] = 3 * kwargs.get('num_labels', 1)
+
+        # get requested model type        
+        config = transformers.AutoConfig.from_pretrained(pretrained_ckpt)
+        model_type = transformers.AutoModelForTokenClassification._model_mapping.get(type(config), None)
+        # create new model type overwriting the forward method
+        # for nested bio tagging predictions and loss computation
+        model_type_for_nested = type(
+            "TransformerForNestedTokenClassification",
+            (ForwardForNestedTokenClassification, model_type),
+            {}
+        )
+
+        return model_type_for_nested.from_pretrained(pretrained_ckpt, **kwargs)
+
 class Task(Enum):
     """ Enum defining supported task types:
             (1) sequence:    marks the experiment as a sequence classification task
@@ -43,13 +96,16 @@ class Task(Enum):
     """
     SEQUENCE = "sequence"
     BIO_TAGGING = "bio-tagging"
+    NESTED_BIO_TAGGING = "nested-bio-tagging"
 
     @property
     def model_type(self) -> Type[transformers.PreTrainedModel]:
         if self is Task.SEQUENCE:
             return transformers.AutoModelForSequenceClassification
-        elif self is Task.BIO_TAGGING:
+        elif (self is Task.BIO_TAGGING):
             return transformers.AutoModelForTokenClassification
+        elif (self is Task.NESTED_BIO_TAGGING):
+            return AutoModelForNestedTokenClassification
 
         raise ValueError("No model found for task <%s>" % self)
     
@@ -59,7 +115,9 @@ class Task(Enum):
             return SequenceClassificationProcessor
         elif self is Task.BIO_TAGGING:
             return BioTaggingProcessor
-        
+        elif self is Task.NESTED_BIO_TAGGING:
+            return NestedBioTaggingProcessor
+ 
         raise ValueError("No data processor found for task <%s>" % self)
 
 class DataConfig(BaseModel):
@@ -137,7 +195,15 @@ class DataConfig(BaseModel):
             return tuple(self.dataset_info.features[self.label_column].names)
         elif self.task is Task.BIO_TAGGING:
             return tuple(self.dataset_info.features[self.label_column].feature.names)
-    
+        elif self.task is Task.NESTED_BIO_TAGGING:
+            # for nested bio tagging tasks the label space
+            # generated here is actually only the entity types
+            # keep in mind that for each unique entity type
+            # the Begin, In and Out-tags are introduces
+            # the overall label space is three times larger
+            # (see `AutoModelForNestedTokenClassification.from_pretrained`)
+            return tuple(self.dataset_info.features[self.label_column].keys())
+
     def load_dataset(
         self, 
         tokenizer:transformers.PreTrainedTokenizer,
@@ -169,14 +235,14 @@ class DataConfig(BaseModel):
                 .filter(filter_, batched=False, desc=key, load_from_cache_file=use_cache)
             for key, dataset in ds.items()
         }
-        
+
         # set data formats
         for dataset in ds.values():
             dataset.set_format(
                 type='torch',
                 columns=['input_ids', 'attention_mask', 'labels']
             )
-
+        
         # return preprocessed datasets
         return ds
 
@@ -199,7 +265,7 @@ class ModelConfig(BaseModel):
 
     @property
     def tokenizer(self) -> transformers.PreTrainedTokenizer:
-        return transformers.AutoTokenizer.from_pretrained(self.pretrained_ckpt, use_fast=True)
+        return transformers.AutoTokenizer.from_pretrained(self.pretrained_ckpt, use_fast=True, add_prefix_space=True)
 
     def load_model(self, label_space:Tuple[str]) -> transformers.PreTrainedModel:
         return self.task.model_type.from_pretrained(
@@ -302,7 +368,7 @@ def main():
     val_loader = DataLoader(val_data, batch_size=config.trainer.batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
     train_loader = DataLoader(train_data, batch_size=config.trainer.batch_size, shuffle=True)
-   
+ 
     # set up wandb 
     wandb_config = config.dict(exclude={"active"})
     wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
