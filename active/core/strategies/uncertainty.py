@@ -40,11 +40,32 @@ class UncertaintyStrategy(ScoreBasedStrategy):
         raise NotImplementedError()
 
     def reduce_scores(self, scores:torch.FloatTensor, mask:torch.BoolTensor) -> torch.FloatTensor:
+        """ Reduce uncertainty scores for token classification tasks.
+            By default uncertainty strategies in the context of token
+            classification tasks compute one uncertainty score per token.
+            The most naive way of reducing these into a single score is
+            by computing their average, which is implemented in this function.
+
+            Args:
+                scores (torch.FloatTensor): 
+                    uncertainty scores of shape (B, S, ...) where
+                    B is the batch size and S is the sequence length.
+                    Note that for nested nested token classification
+                    (i.e. multiple classifications per token) the shape
+                    is three-dimensional where the last dimension represents
+                    the number of classifiers
+                mask (torch.BoolTensor):
+                    mask of valid scores in the `scores` tensor. The shape
+                    matches the shape of the `score` tensor.
+
+            Returns:
+                reduced_scores (torch.FloatTensor): reduced scores of shape (B,)
+        """
         # compute valid sequence lengths and avoid division by zero
-        lengths = mask.sum(dim=-1)
+        lengths = mask.sum(dim=1, keepdims=True)
         lengths = torch.maximum(lengths, torch.ones_like(lengths))
-        # average over sequence
-        return scores.flatten(start_dim=1).sum(dim=1) / lengths
+        # average over sequence and entities in case of nested bio tagging
+        return (scores / lengths).flatten(start_dim=1).sum(dim=1)
 
     @torch.no_grad()
     def process(self, batch:Any) -> torch.FloatTensor:
@@ -66,10 +87,17 @@ class UncertaintyStrategy(ScoreBasedStrategy):
         if scores.ndim == 1:
             # no reduction needed
             return scores
-        
-        # apply mask to scores
+
+        # prepare mask for broadcasting with scores and ignore mask
+        # this basically ensures that the mask applies to the first
+        # dimensions, contrary to usual broadcasting which aligns
+        # axes in reverse order
         mask = batch['attention_mask'].bool()
-        scores[~mask, ...] = 0.0
+        mask = mask.reshape(mask.shape + (1,) * (scores.ndim - mask.ndim))
+        assert mask.ndim == scores.ndim == ignore_mask.ndim
+
+        # apply mask to scores
+        scores.masked_fill_(~mask, 0.0)
         # reduce scores
         return self.reduce_scores(scores, mask & ~ignore_mask)
 
@@ -96,11 +124,16 @@ class EntropyOverMax(UncertaintyStrategy):
     """    
 
     def uncertainty_measure(self, probs:torch.FloatTensor) -> torch.FloatTensor:
-        # only makes sense for token-classification tasks
-        assert probs.ndim == 3, "Entropy over Maxima Sampling only makes sense for token classification tasks!"
+        # only makes sense for (nested) token-classification tasks
+        assert probs.ndim >= 3, "Entropy over Maxima Sampling only makes sense for token classification tasks!"
+        # only take the maximum over label space here to match expected shapes
+        # in process and reduce score functions
         return probs.max(dim=-1).values
     
     def reduce_scores(self, scores:torch.FloatTensor, mask:torch.BoolTensor) -> torch.FloatTensor:
+        # take maximum over classifiers/entities in case of nested
+        # token classification tasks, for other tasks this does nothing
+        scores = scores.reshape(scores.size(0), scores.size(1), -1).max(dim=-1).values
         # note that scores at ~mask are already set to zero
         # and entropy is defined to be zero at x=0 
         # (see https://pytorch.org/docs/stable/special.html)

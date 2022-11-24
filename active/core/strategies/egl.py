@@ -192,6 +192,8 @@ class EglByTopK(_EglBase):
                 labels[i, :j, :k_] = l.t()
             # return probabilities and labels
             return posteriors, labels
+        
+        raise NotImplementedError()
 
 class EglBySampling(_EglBase):
     """ Implements Maximum Expected Gradient Length Sampling Strategy
