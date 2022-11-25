@@ -1,27 +1,28 @@
 from __future__ import annotations
 import os
-# ray
-import ray
-from ray.tune import Tuner
-from ray.air import RunConfig
-from ray.air.callbacks.wandb import WandbLoggerCallback
 # active
 from active import helpers
 from active import strategies
 from active.rl import stream
 from active.rl import extractors
-# reward metric and evaluator (only used for output transform)
+# metrics and evaluator (only used for output transform)
 from ignite.metrics import Fbeta
+from active.core.metrics.area import AreaUnderLearningCurve
 from active.helpers.evaluator import Evaluator
+# configs
+from active.scripts.run_train import Task, ModelConfig
+from active.scripts.run_active import AlExperimentConfig
+# ray
+import ray
+from ray.tune import Tuner
+from ray.air import RunConfig
+from ray.air.callbacks.wandb import WandbLoggerCallback
 # callbacks
 from ray.rllib.algorithms.callbacks import MultiCallbacks
 from active.rl.callbacks import (
     CustomMetricsFromEnvCallbacks,
     LoggingCallbacks
 )
-# configs
-from active.scripts.run_train import Task, ModelConfig
-from active.scripts.run_active import AlExperimentConfig
 # others
 import gym
 from enum import Enum
@@ -166,6 +167,16 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
                 model_sequence_length=self._model_max_seq_len,
                 max_num_labels=self._model_max_num_labels
             )
+            # add area metric to engine
+            area = AreaUnderLearningCurve(
+                output_transform=lambda _: (
+                    # reusing the reward metric which
+                    # is set to be the F-score
+                    self.engine.state.iteration,
+                    self.evaluator.state.metrics['__reward_metric']
+                )
+            )
+            area.attach(self.engine, "Area(F)")
             # make sure the observation spaces match
             assert obs_space == self.observation_space, "Detected change in observation space after environment initialization"
             # mark as initialized
@@ -409,6 +420,7 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to valid RL experiment config")
     parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
+    parser.add_argument("--diable-env-checking", action="store_true", help="Disable environment checking before starting experiment")
     # parse arguments
     args = parser.parse_args()
 
@@ -423,6 +435,7 @@ def main():
         LoggingCallbacks
     ])
     ray_config['log_level'] = "INFO"
+    ray_config['disable_env_checking'] = args.disable_env_checking
 
     # connect to ray cluster
     ray.init(address='auto')
