@@ -17,6 +17,8 @@ from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
 # hugginface
 import datasets
 import transformers
+# ray
+import ray
 # others
 import wandb
 from enum import Enum
@@ -335,26 +337,19 @@ class ExperimentConfig(BaseModel):
     def build_trainer(self) -> Trainer:
         return self.trainer.build_trainer(self.load_model())
 
-def main():
-    from argparse import ArgumentParser
-    # build argument parser
-    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
-    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
-    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
-    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
-    # parse arguments
-    args = parser.parse_args()
 
-    # set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
-
+def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
+    
     # parse configuration
-    config = ExperimentConfig.parse_file(args.config)
+    config = ExperimentConfig.parse_file(config)
     print("Config:", config.json(indent=2))
 
+    # set random seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    
     # load datasets and build trainer
-    ds = config.load_dataset(use_cache=args.use_cache)
+    ds = config.load_dataset(use_cache=use_cache)
     trainer = config.build_trainer()
     
     # split validation dataset from train set
@@ -372,7 +367,7 @@ def main():
     # set up wandb 
     wandb_config = config.dict(exclude={"active"})
     wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
-    wandb_config['seed'] = args.seed
+    wandb_config['seed'] = seed
     wandb.init(config=wandb_config)
 
     # create the validater and tester
@@ -383,9 +378,10 @@ def main():
     attach_metrics(validator, tag="val")
     attach_metrics(tester, tag="test")
     # attach progress bar
-    ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
-    ProgressBar(ascii=True, desc='Validating').attach(validator)
-    ProgressBar(ascii=True, desc='Testing').attach(tester)
+    if not disable_tqdm:
+        ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
+        ProgressBar(ascii=True, desc='Validating').attach(validator)
+        ProgressBar(ascii=True, desc='Testing').attach(tester)
     
     # add event handler for testing and logging
     @trainer.on(Events.EPOCH_COMPLETED)
@@ -404,7 +400,20 @@ def main():
         )
 
     # run training
-    trainer.run(train_loader, **config.trainer.run_kwargs)
-   
+    return trainer.run(train_loader, **config.trainer.run_kwargs)
+
+def main():
+    from argparse import ArgumentParser
+    # build argument parser
+    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
+    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
+    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
+    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
+    # parse arguments
+    args = parser.parse_args()
+    
+    # train model
+    train(**vars(args))
+
 if __name__ == '__main__':
     main() 
