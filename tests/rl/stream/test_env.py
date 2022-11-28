@@ -36,13 +36,13 @@ class TestStreamBasedEnv:
         # create random dataset
         dataset = NamedTensorDataset(
             # actual input to classification model
-            x=torch.rand(pool_size, 2),
+            x=torch.rand(pool_size, 1, 2),
             # needed for environment
             input_ids=torch.randint(0, 100, size=(pool_size, 1)),
             attention_mask=torch.ones((pool_size, 1), dtype=bool),
             # needed for environment but also used
             # for training classification model
-            labels=torch.randint(0, 2, size=(pool_size,))
+            labels=torch.randint(0, 2, size=(pool_size, 1))
         )
 
         # create model and optimizer

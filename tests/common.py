@@ -29,6 +29,8 @@ class ClassificationModelConfig(PretrainedConfig):
         self.in_features = in_features
         self.out_features = out_features
 
+        self.id2label = {i: 'LABEL%i' % i for i in range(out_features)}
+
 class ClassificationModel(PreTrainedModel):
     """ Simple linear classification model used for testing """
 
@@ -47,7 +49,10 @@ class ClassificationModel(PreTrainedModel):
     def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None, **kwargs):
         # predict and compute loss
         logits = self.linear(x)
-        loss = F.cross_entropy(logits, labels) if labels is not None else None
+        loss = F.cross_entropy(
+            logits.flatten(end_dim=-2), 
+            labels.flatten()
+        ) if labels is not None else None
         # return logits and labels as namespace
         return ClassificationModelOutput(
             logits=logits,
