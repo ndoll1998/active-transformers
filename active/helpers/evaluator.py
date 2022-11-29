@@ -49,8 +49,13 @@ class Evaluator(Engine):
         # back to cpu to clear device memory
         return move_to_device(out, device=torch.device('cpu'))
 
-    @staticmethod
-    def get_logits_and_labels(out:dict):
+    @classmethod
+    def get_logits_labels_mask(cls, out:dict):
+        logits, labels = out['logits'], out['labels']
+        return logits, labels, (labels >= 0)
+    
+    @classmethod
+    def get_logits_and_labels(cls, out:dict):
         """ Function to extract the logits and labels from the model output.
             Can be used as `output_transform` in ignite metrics.
         
@@ -62,6 +67,5 @@ class Evaluator(Engine):
                 logits (torch.Tensor): logits tensor only containing valid entries
                 labels (torch.Tensor): labels tensor only containing valid entries
         """
-        logits, labels = out['logits'], out['labels']
-        mask = (labels >= 0)
+        logits, labels, mask = cls.get_logits_labels_mask(out)
         return logits[mask, :], labels[mask]

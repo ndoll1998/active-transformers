@@ -1,9 +1,13 @@
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, random_split
-# import trainer and evaluator engine
+# import trainer, evaluator and metrics
 from active.helpers.trainer import Trainer
 from active.helpers.evaluator import Evaluator
+from active.helpers.metrics import (
+    SeqEvalMetrics, 
+    NestedSeqEvalMetrics
+)
 # import data processors
 from active.helpers.processor import (
     BioTaggingProcessor,
@@ -11,33 +15,17 @@ from active.helpers.processor import (
     SequenceClassificationProcessor
 )
 # import ignite
-from ignite.engine import Events
+from ignite.engine import Engine, Events
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
 # hugginface
 import datasets
 import transformers
-# ray
-import ray
 # others
 import wandb
 from enum import Enum
 from typing import Tuple, Dict, Union, Callable, Type
 from pydantic import BaseModel, validator, root_validator
-
-def attach_metrics(engine, tag=None):
-    # create metrics
-    L = Average(output_transform=lambda out: out['loss'])
-    A = Accuracy(output_transform=type(engine).get_logits_and_labels)
-    R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
-    P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
-    F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
-    # attach metrics
-    L.attach(engine, 'L' if tag is None else ('%s/L' % tag))
-    A.attach(engine, 'A' if tag is None else ('%s/A' % tag))
-    R.attach(engine, 'R' if tag is None else ('%s/R' % tag))
-    P.attach(engine, 'P' if tag is None else ('%s/P' % tag))
-    F.attach(engine, 'F' if tag is None else ('%s/F' % tag))
 
 class ForwardForNestedTokenClassification(transformers.PreTrainedModel):
     """ Forward container class used by transformer models for nested token classification.
@@ -247,6 +235,45 @@ class DataConfig(BaseModel):
         
         # return preprocessed datasets
         return ds
+    
+    def attach_metrics(self, engine:Engine, tag:str) -> None:
+        # create token-level metrics
+        L = Average(output_transform=lambda out: out['loss'])
+        A = Accuracy(output_transform=type(engine).get_logits_and_labels)
+        R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
+        P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
+        F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
+        
+        if self.task is Task.SEQUENCE:
+            # attach metrics
+            L.attach(engine, '%s/L' % tag)
+            A.attach(engine, '%s/A' % tag)
+            R.attach(engine, '%s/R' % tag)
+            P.attach(engine, '%s/P' % tag)
+            F.attach(engine, '%s/F' % tag)
+
+        elif self.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
+            # attach token-level metrics
+            L.attach(engine, '%s/token/L' % tag)
+            A.attach(engine, '%s/token/A' % tag)
+            R.attach(engine, '%s/token/R' % tag)
+            P.attach(engine, '%s/token/P' % tag)
+            F.attach(engine, '%s/token/F' % tag)
+            
+            # create and attach sequence level metric
+            if self.task is Task.BIO_TAGGING:
+                SeqEvalMetrics(
+                    label_space=self.label_space, 
+                    output_transform=type(engine).get_logits_labels_mask
+                ).attach(engine, '%s/seq' % tag)
+
+            elif self.task is Task.NESTED_BIO_TAGGING:
+                NestedSeqEvalMetrics(
+                    # note that here the label space is the entity types
+                    entity_types=self.label_space,
+                    output_transform=type(engine).get_logits_labels_mask
+                ).attach(engine, '%s/seq' % tag)
+
 
 class ModelConfig(BaseModel):
     """ Model Configuration Model """
@@ -374,9 +401,9 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     validator = Evaluator(trainer.unwrapped_model)
     tester = Evaluator(trainer.unwrapped_model)
     # attach metrics
-    attach_metrics(trainer, tag="train")
-    attach_metrics(validator, tag="val")
-    attach_metrics(tester, tag="test")
+    config.data.attach_metrics(trainer, tag="train")
+    config.data.attach_metrics(validator, tag="val")
+    config.data.attach_metrics(tester, tag="test")
     # attach progress bar
     if not disable_tqdm:
         ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
@@ -391,9 +418,15 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
         test_state = tester.run(test_loader)
         # log both train and test metrics
         print("Step:", engine.state.iteration, "-" * 15)
-        print("Train F-Score:", engine.state.metrics['train/F'])
-        print("Val   F-Score:", val_state.metrics['val/F'])
-        print("Test  F-Score:", test_state.metrics['test/F'])
+        if config.task is Task.SEQUENCE:
+            print("Train F-Score:", engine.state.metrics['train/F'])
+            print("Val   F-Score:", val_state.metrics['val/F'])
+            print("Test  F-Score:", test_state.metrics['test/F'])
+        elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
+            print("Train Sequence F-Score:", engine.state.metrics['train/seq/weighted avg/F'])
+            print("Val   Sequence F-Score:", val_state.metrics['val/seq/weighted avg/F'])
+            print("Test  Sequence F-Score:", test_state.metrics['test/seq/weighted avg/F'])
+        # log all metrics to weights and biases 
         wandb.log(
             test_state.metrics | val_state.metrics | engine.state.metrics, 
             step=engine.state.iteration
