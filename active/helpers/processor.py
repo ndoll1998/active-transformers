@@ -47,8 +47,9 @@ class BioTaggingProcessor(object):
         # map label to id
         label2id = dict(zip(label_space, range(len(label_space))))
         # map begin/in tags to corresponding entities
-        begin_tags = {tag: tag.lstrip(begin_tag_prefix) for tag in label_space if tag.startswith(begin_tag_prefix)}
-        in_tags = {tag: tag.lstrip(in_tag_prefix) for tag in label_space if tag.startswith(in_tag_prefix)}
+        begin_tags = {tag: tag[len(begin_tag_prefix):] for tag in label_space if tag.startswith(begin_tag_prefix)}
+        in_tags = {tag: tag[len(in_tag_prefix):] for tag in label_space if tag.startswith(in_tag_prefix)}
+
         # make sure there is a in-tag for each begin-tag and vise versa
         assert set(begin_tags.values()) == set(in_tags.values())
         # make sure corresponding begin- and in-tags reference the same entity
