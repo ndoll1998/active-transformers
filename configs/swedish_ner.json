@@ -3,7 +3,7 @@
     "task": "bio-tagging",
 
     "data": {
-        "dataset": "swedish_ner_corpus",
+        "dataset": "data/swedish_ner_corpus.py",
         "text_column": "tokens",
         "label_column": "ner_tags",
         "begin_tag_prefix": "B-",
@@ -13,7 +13,7 @@
     },
     
     "model": {
-        "pretrained_ckpt": "af-ai-center/bert-base-swedish-uncased"
+        "pretrained_ckpt": "KB/bert-base-swedish-cased"
     },
     
     "trainer": {

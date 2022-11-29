@@ -18,7 +18,7 @@
         "incremental": true,
         "lr": 2e-5,
         "weight_decay": 0.01,
-        "batch_size": 12,
+        "batch_size": 128,
         "max_epochs": 50,
         "epoch_length": null,
         "min_epoch_length": 16,
