@@ -1,3 +1,4 @@
+import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, random_split
@@ -265,14 +266,14 @@ class DataConfig(BaseModel):
                 SeqEvalMetrics(
                     label_space=self.label_space, 
                     output_transform=type(engine).get_logits_labels_mask
-                ).attach(engine, '%s/seq' % tag)
+                ).attach(engine, '%s/entity' % tag)
 
             elif self.task is Task.NESTED_BIO_TAGGING:
                 NestedSeqEvalMetrics(
                     # note that here the label space is the entity types
                     entity_types=self.label_space,
                     output_transform=type(engine).get_logits_labels_mask
-                ).attach(engine, '%s/seq' % tag)
+                ).attach(engine, '%s/entity' % tag)
 
 
 class ModelConfig(BaseModel):
@@ -367,7 +368,6 @@ class ExperimentConfig(BaseModel):
 
 def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     
-    # parse configuration
     config = ExperimentConfig.parse_file(config)
     print("Config:", config.json(indent=2))
 
@@ -393,9 +393,13 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
  
     # set up wandb 
     wandb_config = config.dict(exclude={"active"})
-    wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
+    wandb_config['data']['dataset'] = ds['train'].info.builder_name
     wandb_config['seed'] = seed
-    wandb.init(config=wandb_config)
+    wandb.init(
+        config=wandb_config,
+        project=os.environ.get("WANDB_PROJECT", "train-final"),
+        group=wandb_config['data']['dataset']
+    )
 
     # create the validater and tester
     validator = Evaluator(trainer.unwrapped_model)
@@ -423,9 +427,9 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
             print("Val   F-Score:", val_state.metrics['val/F'])
             print("Test  F-Score:", test_state.metrics['test/F'])
         elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-            print("Train Sequence F-Score:", engine.state.metrics['train/seq/weighted avg/F'])
-            print("Val   Sequence F-Score:", val_state.metrics['val/seq/weighted avg/F'])
-            print("Test  Sequence F-Score:", test_state.metrics['test/seq/weighted avg/F'])
+            print("Train Entity F-Score:", engine.state.metrics['train/entity/weighted avg/F'])
+            print("Val   Entity F-Score:", val_state.metrics['val/entity/weighted avg/F'])
+            print("Test  Entity F-Score:", test_state.metrics['test/entity/weighted avg/F'])
         # log all metrics to weights and biases 
         wandb.log(
             test_state.metrics | val_state.metrics | engine.state.metrics, 
