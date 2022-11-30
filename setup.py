@@ -33,6 +33,7 @@ setup(
         "scikit-learn>=1.1.1",
         "scipy>=1.9.0",
         "matplotlib>=3.5.2",
+        "seqeval>=1.2.2",
         "pydantic>=1.10.2",
         "ray[default]>=2.1.0"
     ],
