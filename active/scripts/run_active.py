@@ -22,7 +22,7 @@ from math import ceil
 from pydantic import BaseModel, validator
 from matplotlib import pyplot as plt
 # base config and helper function
-from active.scripts.run_train import Task, ExperimentConfig, attach_metrics
+from active.scripts.run_train import Task, ExperimentConfig
 
 def visualize_embeds(strategy):
     # get selected indices and processing output of unlabeled pool
@@ -107,35 +107,21 @@ class AlExperimentConfig(ExperimentConfig):
         elif isinstance(v, dict):
             return v | {'task': values.get('task')}
 
-def main():
-
-    from argparse import ArgumentParser
-    # build argument parser
-    parser = ArgumentParser(description="Train transformer model on sequence or bio-taging classification tasks using active learning.")
-    # add arguments
-    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
-    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
-    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
-    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
-    parser.add_argument("--strategy", type=str, default=None, help="Overwrite strategy specified in config")
-    parser.add_argument("--budget", type=int, default=None, help="Overwrite budget specified in config")
-    parser.add_argument("--query-size", type=int, default=None, help="Overwrite query size specified in config")
-    # parse arguments
-    args = parser.parse_args()
-
-    # set random seed
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_cache:bool, disable_tqdm:bool =False):
 
     # parse configuration and apply overwrites
-    config = AlExperimentConfig.parse_file(args.config)
-    config.active.strategy = args.strategy or config.active.strategy
-    config.active.budget = args.budget or config.active.budget
-    config.active.query_size = args.query_size or config.active.query_size
+    config = AlExperimentConfig.parse_file(config)
+    config.active.strategy = strategy or config.active.strategy
+    config.active.budget = budget or config.active.budget
+    config.active.query_size = query_size or config.active.query_size
     print("Config:", config.json(indent=2))
+    
+    # set random seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
     # load datasets
-    ds = config.load_dataset(use_cache=args.use_cache)
+    ds = config.load_dataset(use_cache=use_cache)
     
     # keep tokenizer around as it is used in event handler
     tokenizer = config.model.tokenizer
@@ -143,20 +129,22 @@ def main():
     model = config.load_model()
     strategy = config.active.build_strategy(model)
     # attach progress bar to strategy
-    ProgressBar(ascii=True, desc='Strategy').attach(strategy)
+    if not disable_tqdm:
+        ProgressBar(ascii=True, desc='Strategy').attach(strategy)
     
     # create trainer, validator and tester engines
     trainer = config.trainer.build_trainer(model) 
     validator = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
-    attach_metrics(trainer, tag="train")
-    attach_metrics(validator, tag="val")
-    attach_metrics(tester, tag="test")
+    config.data.attach_metrics(trainer, tag="train")
+    config.data.attach_metrics(validator, tag="val")
+    config.data.attach_metrics(tester, tag="test")
     # attach progress bar
-    ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
-    ProgressBar(ascii=True, desc='Validating').attach(validator)
-    ProgressBar(ascii=True, desc='Testing').attach(tester)
+    if not disable_tqdm:
+        ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
+        ProgressBar(ascii=True, desc='Validating').attach(validator)
+        ProgressBar(ascii=True, desc='Testing').attach(tester)
     # attach confusion matrix metric to tester
     # needed for some active learning metrics
     ConfusionMatrix(
@@ -180,7 +168,7 @@ def main():
         trainer_run_kwargs=config.trainer.run_kwargs,
         train_batch_size=config.trainer.batch_size,
         eval_batch_size=config.trainer.batch_size,
-        train_val_ratio=0.9
+        train_val_ratio=0.8
     )
     
     @al_engine.on(Events.ITERATION_STARTED)
@@ -210,26 +198,28 @@ def main():
 
     @al_engine.on(Events.ITERATION_COMPLETED)
     def evaluate_and_log(engine):
-        # print
-        print(
-            "Training Converged:", trainer.converged, 
-            "Train F-Score: %.03f" % trainer.state.metrics['train/F']
-        )
+        
         # create validation and test dataloaders
         val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
         test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
-        # run on validation data
+        # evaluate on val and test set
         val_metrics = validator.run(val_loader).metrics
-        print("Validation Metrics:", val_metrics)
-
-        # run on test data
         test_metrics = tester.run(test_loader).metrics
         # don't log test confusion matrix
         test_metrics = test_metrics.copy()
         test_metrics.pop('cm')
-        # print test metrics
-        print("Test Metrics:", test_metrics)
-
+        # log both train and test metrics
+        print("Step:", engine.state.iteration, "-" * 15)
+        print("Training Converged:", trainer.converged)
+        if config.task is Task.SEQUENCE:
+            print("Train F-Score:", trainer.state.metrics['train/F'])
+            print("Val   F-Score:", val_metrics['val/F'])
+            print("Test  F-Score:", test_metrics['test/F'])
+        elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
+            print("Train Entity F-Score:", trainer.state.metrics['train/entity/weighted avg/F'])
+            print("Val   Entity F-Score:", val_metrics['val/entity/weighted avg/F'])
+            print("Test  Entity F-Score:", test_metrics['test/entity/weighted avg/F'])
+        
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
         strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
@@ -242,29 +232,53 @@ def main():
         # check if there is an output to visualize
         if loop.strategy.output is not None:
             ax, fig = visualize_embeds(loop.strategy)
-            ax.set(title="%s embedding iteration %i (t-SNE)" % (args.strategy, engine.state.iteration))
+            ax.set(title="%s embedding iteration %i (t-SNE)" % (config.active.strategy, engine.state.iteration))
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
             # close figure
             plt.close(fig)
     
-    # add metrics to active learning engine
+    # add work saved over sampling metric
     wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
-    area = AreaUnderLearningCurve(
-        output_transform=lambda _: (
-            # point of learning curve given
-            # by iteration and accuracy value
-            al_engine.state.iteration,
-            tester.state.metrics['test/F']
-        )
-    )
     wss.attach(al_engine, "test/wss")
-    area.attach(al_engine, "test/Area(F)")
+   
+    # add area under learning curve metrics 
+    if config.task is Task.SEQUENCE:
+        # area under f-score curve
+        area = AreaUnderLearningCurve(
+            output_transform=lambda _: (
+                al_engine.state.iteration,
+                tester.state.metrics['test/F']
+            )
+        )
+        area.attach(al_engine, "test/Area(F)")
+
+    elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
+        # area under token-level f-score curve
+        area = AreaUnderLearningCurve(
+            output_transform=lambda _: (
+                al_engine.state.iteration,
+                tester.state.metrics['test/token/F']
+            )
+        )
+        area.attach(al_engine, "test/token/Area(F)")
+        # area under entity-level f-score curve
+        area = AreaUnderLearningCurve(
+            output_transform=lambda _: (
+                al_engine.state.iteration,
+                tester.state.metrics['test/entity/weighted avg/F']
+            )
+        )
+        area.attach(al_engine, "test/entity/weighted avg/Area(F)")
 
     # initialize wandb
     wandb_config = config.dict()
-    wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
-    wandb_config['seed'] = args.seed
-    wandb.init(config=wandb_config)
+    wandb_config['data']['dataset'] = ds['train'].info.builder_name
+    wandb_config['seed'] = seed
+    wandb.init(
+        config=wandb_config,
+        project=os.environ.get("WANDB_PROJECT", "active-final"),
+        group=wandb_config['data']['dataset']
+    )
 
     # run active learning experiment
     state = al_engine.run(loop, steps=config.active.num_steps)
@@ -274,6 +288,25 @@ def main():
 
     # run finished
     wandb.finish(quiet=True)
+
+def main():
+
+    from argparse import ArgumentParser
+    # build argument parser
+    parser = ArgumentParser(description="Train transformer model on sequence or bio-taging classification tasks using active learning.")
+    # add arguments
+    parser = ArgumentParser(description="Train transformer model on sequence or token classification tasks.")
+    parser.add_argument("--config", type=str, required=True, help="Path to a valid experiment configuration")
+    parser.add_argument("--use-cache", action='store_true', help="Load cached preprocessed datasets if available")
+    parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
+    parser.add_argument("--strategy", type=str, default=None, help="Overwrite strategy specified in config")
+    parser.add_argument("--budget", type=int, default=None, help="Overwrite budget specified in config")
+    parser.add_argument("--query-size", type=int, default=None, help="Overwrite query size specified in config")
+    # parse arguments
+    args = parser.parse_args()
+
+    # run active learning experiment
+    active(**vars(args))
 
 if __name__ == '__main__':
     main()
