@@ -6,8 +6,8 @@
         "dataset": "ncbi_disease",
         "text_column": "tokens",
         "label_column": "ner_tags",
-        "begin_tag_prefix": "",
-        "in_tag_prefix": "",
+        "begin_tag_prefix": "B-",
+        "in_tag_prefix": "I-",
         "min_sequence_length": 0,
         "max_sequence_length": 64
     },
