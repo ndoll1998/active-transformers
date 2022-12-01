@@ -71,3 +71,18 @@ class WikigoldBuilder(ConllFormatBuilder):
             datasets.SplitGenerator(name=datasets.Split.TEST, gen_kwargs={'fpaths': [test_fpath]})
         ]
 
+    def _generate_examples(self, **kwargs):
+
+        for guid, item in super(WikigoldBuilder, self)._generate_examples(**kwargs):
+            # replace initial entity tag with corresponding in tag
+            prev_tag = "O"
+            for i, tag in enumerate(item['ner_tags']):
+                # check if tag marks beginning of a new entity
+                if (tag != prev_tag) and (tag != 'O'):
+                    item['ner_tags'][i] = "B-" + tag[2:]
+                # update previous tag
+                prev_tag = tag
+
+            # yield updated item
+            yield guid, item
+
