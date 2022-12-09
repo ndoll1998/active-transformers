@@ -12,6 +12,7 @@ class RemoteExperiment(object):
         # save config and seed
         self.config = config
         self.seed = seed
+        
         # extract experiment name from config
         with open(self.config, 'r') as f:
             self.name = json.loads(f.read())['name']
@@ -19,7 +20,7 @@ class RemoteExperiment(object):
     def run(self, use_cache:bool):
         return train(self.config, self.seed, use_cache, True)
 
-    def __repr__(self) -> str:        
+    def __repr__(self) -> str:
         return self.name
 
 if __name__ == '__main__':
@@ -35,6 +36,10 @@ if __name__ == '__main__':
     # parse arguments
     args = parser.parse_args()
 
+    # check if all configs exist
+    for config in args.configs:
+        assert os.path.isfile(config), "Config file %s not found!" % config
+
     # connect to ray cluster
     ray.init(
         address=args.ray_address,
@@ -46,7 +51,7 @@ if __name__ == '__main__':
             }
         },
         # setup logging
-        logging_level="WARN",
+        logging_level="INFO",
         log_to_driver=args.verbose
     )
 
@@ -56,11 +61,17 @@ if __name__ == '__main__':
     ]
     # create/schedule all remote jobs
     futures = [experiment.run.remote(args.use_cache) for experiment in experiments]
+    task_ids = [f.task_id() for f in futures]
 
     # wait for jobs to finish
     for _ in trange(len(futures)):
         # block until one job finished
-        _, futures = ray.wait(futures, num_returns=1, fetch_local=False)
+        objs, futures = ray.wait(futures, num_returns=1, fetch_local=False)
+        # delete actor corresponding to finished job
+        # to free cluster resource and allow execution
+        # of next scheduled task
+        i = task_ids.index(objs[0].task_id())
+        del experiments[i], task_ids[i]
 
     # cleanup
     ray.shutdown()
