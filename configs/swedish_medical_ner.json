@@ -9,7 +9,7 @@
         "begin_tag_prefix": "B-",
         "in_tag_prefix": "I-",
         "min_sequence_length": 0,
-        "max_sequence_length": 32
+        "max_sequence_length": 64
     },
     
     "model": {

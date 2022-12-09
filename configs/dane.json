@@ -13,7 +13,7 @@
     },
     
     "model": {
-        "pretrained_ckpt": "flax-community/roberta-base-danish"
+        "pretrained_ckpt": "DDSC/roberta-base-danish"
     },
     
     "trainer": {
