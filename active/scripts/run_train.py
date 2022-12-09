@@ -23,7 +23,6 @@ from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
 import datasets
 import transformers
 # others
-import wandb
 from enum import Enum
 from typing import Tuple, Dict, Union, Callable, Type
 from pydantic import BaseModel, validator, root_validator
@@ -367,6 +366,7 @@ class ExperimentConfig(BaseModel):
 
 
 def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
+    import wandb
    
     config = ExperimentConfig.parse_file(config)
     print("Config:", config.json(indent=2))

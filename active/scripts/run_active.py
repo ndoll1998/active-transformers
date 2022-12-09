@@ -16,15 +16,14 @@ from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # dimensionality reduction
 from sklearn.manifold import TSNE
 # others
-import wandb
 import transformers
 from math import ceil
 from pydantic import BaseModel, validator
-from matplotlib import pyplot as plt
 # base config and helper function
 from active.scripts.run_train import Task, ExperimentConfig
 
 def visualize_embeds(strategy):
+    from matplotlib import pyplot as plt
     # get selected indices and processing output of unlabeled pool
     idx = strategy.selected_indices
     output = strategy.output
@@ -108,6 +107,7 @@ class AlExperimentConfig(ExperimentConfig):
             return v | {'task': values.get('task')}
 
 def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_cache:bool, disable_tqdm:bool =False):
+    import wandb
 
     # parse configuration and apply overwrites
     config = AlExperimentConfig.parse_file(config)
