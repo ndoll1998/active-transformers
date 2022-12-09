@@ -290,7 +290,7 @@ class ModelConfig(BaseModel):
         except OSError as e:
             # handle model invalid
             raise ValueError("Unkown pretrained checkpoint: %s" % value) from e
- 
+
         return value
 
     @property
@@ -367,7 +367,7 @@ class ExperimentConfig(BaseModel):
 
 
 def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
-    
+   
     config = ExperimentConfig.parse_file(config)
     print("Config:", config.json(indent=2))
 
@@ -398,7 +398,7 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     wandb.init(
         config=wandb_config,
         project=os.environ.get("WANDB_PROJECT", "train-final"),
-        group=wandb_config['data']['dataset']
+        group=config.name
     )
 
     # create the validater and tester

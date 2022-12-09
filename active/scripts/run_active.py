@@ -277,7 +277,8 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     wandb.init(
         config=wandb_config,
         project=os.environ.get("WANDB_PROJECT", "active-final"),
-        group=wandb_config['data']['dataset']
+        group=config.name,
+        job_type=config.active.strategy
     )
 
     # run active learning experiment
