@@ -18,12 +18,12 @@ from sklearn.manifold import TSNE
 # others
 import transformers
 from math import ceil
+from matplotlib import pyplot as plt
 from pydantic import BaseModel, validator
 # base config and helper function
 from active.scripts.run_train import Task, ExperimentConfig
 
 def visualize_embeds(strategy):
-    from matplotlib import pyplot as plt
     # get selected indices and processing output of unlabeled pool
     idx = strategy.selected_indices
     output = strategy.output
