@@ -56,7 +56,8 @@ class SeqEvalMetrics(Metric):
         metrics = classification_report(
             y_true=list(chain(*self.y_true)),
             y_pred=list(chain(*self.y_pred)),
-            output_dict=True
+            output_dict=True,
+            zero_division=0
         )
         # post-process metrics dict
         return {
