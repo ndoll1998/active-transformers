@@ -17,7 +17,7 @@ __all__ = [
     "EglBySampling"
 ]
 
-class _EglBase(ScoreBasedStrategy):
+class AbstractEgl(ScoreBasedStrategy):
     """ Abstract Base for Maximum Expected Gradient Length Sampling 
         Strategy. Assumes cross-entropy loss. Child classes must
         overwrite the abstract method `_get_hallucinated_labels`
@@ -37,7 +37,7 @@ class _EglBase(ScoreBasedStrategy):
         random_sample:Optional[bool] =False
     ) -> None:
         # initialize strategy
-        super(_EglBase, self).__init__(
+        super(AbstractEgl, self).__init__(
             random_sample=random_sample
         )
         # move model to available device(s)
@@ -49,7 +49,7 @@ class _EglBase(ScoreBasedStrategy):
         logits:torch.FloatTensor,
         mask:Union[torch.BoolTensor, None]
     ) -> Tuple[torch.FloatTensor, torch.LongTensor]:
-        """ Get hallucinated labels for which to compute the loss and gradients.
+        """ Abstract Method, overwrite to implement custom label generation from model logits.
         
             Args:
                 logits (torch.FloatTensor): 
@@ -113,7 +113,7 @@ class _EglBase(ScoreBasedStrategy):
                 return torch.sum(probs * gradnorm.compute(), dim=1)
 
 
-class EglByTopK(_EglBase):
+class EglByTopK(AbstractEgl):
     """ Implements Maximum Expected Gradient Length Sampling Strategy
         by selecting the top-k predictions as labels for gradient 
         computation. Assumes cross-entropy loss.
@@ -129,7 +129,7 @@ class EglByTopK(_EglBase):
     def __init__(
         self,
         model:PreTrainedModel,
-        k:int =5
+        k:int =5,
     ) -> None:
         # initialize strategy
         super(EglByTopK, self).__init__(model)
@@ -195,7 +195,7 @@ class EglByTopK(_EglBase):
         
         raise NotImplementedError()
 
-class EglBySampling(_EglBase):
+class EglBySampling(AbstractEgl):
     """ Implements Maximum Expected Gradient Length Sampling Strategy
         by random sampling labels from the predicted label distribution.
         Assumes cross-entropy loss.
@@ -211,7 +211,7 @@ class EglBySampling(_EglBase):
     def __init__(
         self,
         model:PreTrainedModel,
-        k:int =5
+        k:int =5,
     ) -> None:
         # initialize strategy
         super(EglBySampling, self).__init__(model)
