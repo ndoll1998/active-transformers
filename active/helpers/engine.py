@@ -42,11 +42,10 @@ class ActiveLearningEngine(Engine):
             eval_batch_size (Optional[int]): 
                 batch size used for model evaluation. 
                 Defaults to `train_batch_size`.
-            train_val_ratio (Optional[float]):
-                ratio between training and validation data sizes.
-                Defaults to 0.9 meaning 90% of the sampled data is
-                used for model training and the remaining 10% is
-                used as validation data.
+            val_ratio (Optional[float]):
+                validation data split ratio. Defaults to 0.9 meaning 90% of
+                the sampled data is used for model training and the remaining
+                10% is used as validation data.
     """
 
     def __init__(
@@ -55,7 +54,7 @@ class ActiveLearningEngine(Engine):
         trainer_run_kwargs:Optional[dict] ={},
         train_batch_size:Optional[int] =32,
         eval_batch_size:Optional[int] =None,
-        train_val_ratio:Optional[float] =0.9
+        val_ratio:Optional[float] =0.9
     ) -> None:
         # initialize engine
         super(ActiveLearningEngine, self).__init__(type(self).step)
@@ -68,7 +67,7 @@ class ActiveLearningEngine(Engine):
         self.train_batch_size = train_batch_size
         self.eval_batch_size = eval_batch_size or self.train_batch_size
         self.trainer_run_kwargs = trainer_run_kwargs
-        self.train_val_ratio = train_val_ratio
+        self.val_ratio = val_ratio
 
         # active datasets
         self.train_data = []
@@ -143,7 +142,7 @@ class ActiveLearningEngine(Engine):
         # make sure samples are valid
         assert len(samples) > 0, "No samples provided!"
         # compute data split sizes satifying the train-validation ratio as closely as possible
-        n_train = round((self.num_total_samples + len(samples)) * self.train_val_ratio) - self.num_train_samples
+        n_train = round((self.num_total_samples + len(samples)) * self.val_ratio) - self.num_train_samples
         n_val = len(samples) - n_train
         # split into train and validation samples
         train_samples, val_samples = random_split(samples, [n_train, n_val])

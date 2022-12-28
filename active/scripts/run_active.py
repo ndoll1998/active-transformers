@@ -55,6 +55,8 @@ class ActiveLearningConfig(BaseModel):
     # budget and query size
     budget:int
     query_size:int
+    # validation split
+    val_ratio:float =0.9
 
     @property
     def num_steps(self):
@@ -168,7 +170,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         trainer_run_kwargs=config.trainer.run_kwargs,
         train_batch_size=config.trainer.batch_size,
         eval_batch_size=config.trainer.batch_size,
-        train_val_ratio=0.8
+        val_ratio=config.active.val_ratio
     )
     
     @al_engine.on(Events.ITERATION_STARTED)
