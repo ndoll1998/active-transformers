@@ -11,7 +11,7 @@ from active.helpers.engine import ActiveLearningEngine
 from tests.common import (
     ClassificationModel,
     ClassificationModelConfig,
-    register_classification_model 
+    register_classification_model
 )
 
 class TestActiveLearningEngine:
@@ -20,7 +20,7 @@ class TestActiveLearningEngine:
     def test_only_populated_train_data(self):
 
         # register classification model    
-        register_classification_model() 
+        register_classification_model()
 
         # create model and optimizer
         model = ClassificationModel(ClassificationModelConfig(2, 2))
@@ -32,9 +32,9 @@ class TestActiveLearningEngine:
             trainer_run_kwargs=dict(
                 max_epochs=5
             ),
-            train_val_ratio=1.0 # use all data for training
+            val_ratio=1.0 # use all data for training
         )
-        
+
         # create random dataset
         dataset = NamedTensorDataset(
             x=torch.rand(16, 2),
@@ -45,16 +45,16 @@ class TestActiveLearningEngine:
         engine.step(dataset)
         assert engine.num_train_samples == 16
         assert engine.num_val_samples == 0
-        
+
         # step engine and check data sizes
         engine.step(dataset)
         assert engine.num_train_samples == 32
         assert engine.num_val_samples == 0
 
     def test_populate_train_and_val_data(self):
-        
+
         # register classification model    
-        register_classification_model() 
+        register_classification_model()
 
         # create model and optimizer
         model = ClassificationModel(ClassificationModelConfig(2, 2))
@@ -66,7 +66,7 @@ class TestActiveLearningEngine:
             trainer_run_kwargs=dict(
                 max_epochs=5
             ),
-            train_val_ratio=0.8 # use 80% for training
+            val_ratio=0.8 # use 80% for training
         )
 
         # create random dataset
@@ -74,17 +74,17 @@ class TestActiveLearningEngine:
             x=torch.rand(16, 2),
             labels=torch.randint(0, 2, size=(16,))
         )
-        
+
         # step engine and check data sizes
         engine.step(dataset)
         assert engine.num_train_samples == 13
-        assert engine.num_val_samples == 3        
+        assert engine.num_val_samples == 3
 
         # step engine and check data sizes
         engine.step(dataset)
         assert engine.num_train_samples == 26
         assert engine.num_val_samples == 6
-        
+
         # step engine and check data sizes
         engine.step(dataset)
         assert engine.num_train_samples == 38
