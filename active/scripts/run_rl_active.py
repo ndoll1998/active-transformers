@@ -14,9 +14,9 @@ from active.scripts.run_train import Task, ModelConfig
 from active.scripts.run_active import AlExperimentConfig
 # ray
 import ray
-from ray.tune import Tuner
-from ray.air import RunConfig
-from ray.air.callbacks.wandb import WandbLoggerCallback
+from ray.tune import Tuner, TuneConfig
+from ray.air import RunConfig, CheckpointConfig
+from ray.air.integrations.wandb import WandbLoggerCallback
 # callbacks
 from ray.rllib.algorithms.callbacks import MultiCallbacks
 from active.rl.callbacks import (
@@ -26,7 +26,8 @@ from active.rl.callbacks import (
 # others
 import gym
 from enum import Enum
-from pydantic import BaseModel, validator
+from itertools import chain
+from pydantic import BaseModel, validator, root_validator
 from typing import Type, List, Dict, Any, Union
 
 def load_model_and_policy_pool_data(
@@ -44,7 +45,7 @@ def load_model_and_policy_pool_data(
     policy_tokenizer = policy.tokenizer
     # pad token ids
     model_pad_token_id = model_tokenizer.pad_token_id
-    policy_pad_token_id = policy_tokenizer.pad_token_id   
+    policy_pad_token_id = policy_tokenizer.pad_token_id
 
     # disable filtering in data processing as this might lead to
     # differences in the model vs policy dataset
@@ -69,7 +70,7 @@ def load_model_and_policy_pool_data(
     combined_pool.set_format(type='np')
     # make sure all pools are of the same size
     assert len(model_pool) == len(combined_pool) == len(policy_pool)
-    
+
     # filter
     filter_ = lambda e: ((e['input_ids'] != model_pad_token_id).sum() > experiment.data.min_sequence_length) or \
         ((e['policy_input_ids'] != policy_pad_token_id).sum() > policy.min_sequence_length)
@@ -86,10 +87,10 @@ def load_model_and_policy_pool_data(
     policy_pool.set_format(type='torch', columns=['input_ids', 'attention_mask', 'labels'])
     # return pool datasets
     return model_pool, policy_pool
-    
+
 class RayStreamBasedEnv(stream.env.StreamBasedEnv):
     """ Stream-based environment slightly modified to be
-        compatible with ray.rllib 
+        compatible with ray.rllib
 
         Main changes/features to the default stream-based env are:
 
@@ -153,7 +154,7 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
                     trainer_run_kwargs=self.experiment.trainer.run_kwargs,
                     train_batch_size=self.experiment.trainer.batch_size,
                     eval_batch_size=self.experiment.trainer.batch_size,
-                    train_val_ratio=0.9
+                    val_ratio=self.experiment.active.val_ratio
                 ),
                 # set query strategy
                 query_strategy=strategies.Random(),
@@ -186,7 +187,7 @@ class RayStreamBasedEnv(stream.env.StreamBasedEnv):
         return super(RayStreamBasedEnv, self).reset()
 
 class Approach(Enum):
-    """ Enum defining supported active learning approaches: 
+    """ Enum defining supported active learning approaches:
             (1) stream:
                 data is presented to the strategy/agent as a stream.
                 Agent decides whether to annoate or to dicard datapoints.
@@ -215,7 +216,7 @@ class FeatureExtractor(Enum):
     @property
     def type(self) -> Type[extractors.FeatureExtractor]:
         if self is FeatureExtractor.TRANSFORMER:
-            return extractors.TransformerFeatureExtractor        
+            return extractors.TransformerFeatureExtractor
 
 class Algorithm(Enum):
     """ Enum defining supported algorithms:
@@ -238,11 +239,17 @@ class Model(Enum):
             (1) stream/dqn-model: simple Deep-Q-Learning Model for stream-based approach
     """
     STREAM_DQN_MODEL = "stream/dqn-model"
+    STREAM_ACTOR_CRITIC_MODEL = "stream/actor-critic-model"
+    STREAM_RECURRENT_ACTOR_CRITIC_MODEL = "stream/recurrent-actor-critic-model"
 
     @property
     def type(self) -> Type[ray.rllib.models.torch.torch_modelv2.TorchModelV2]:
         if self is Model.STREAM_DQN_MODEL:
             return stream.model.DQNModel
+        if self is Model.STREAM_ACTOR_CRITIC_MODEL:
+            return stream.model.ActorCriticModel
+        if self is Model.STREAM_RECURRENT_ACTOR_CRITIC_MODEL:
+            return stream.model.RecurrentActorCriticModel
 
 class FeatureExtractorConfig(ModelConfig):
     """ Feature Extractor Configuration Model """
@@ -309,9 +316,9 @@ def parse_experiment_config(cls, value) -> AlExperimentConfig:
     config = AlExperimentConfig.parse_file(value)
     # only supports bio tagging tasks
     if config.task is not Task.BIO_TAGGING:
-        raise ValueError("Currently only bio tagging tasks are supported")   
+        raise ValueError("Currently only bio tagging tasks are supported")
     # return the loaded configuration
-    return config 
+    return config
 
 class EvaluationConfig(BaseModel):
     """ Evaluation Configuration Model """
@@ -350,12 +357,12 @@ class RlExperimentConfig(BaseModel):
     # algorithm and worker setup
     algorithm:AlgorithmConfig
     workers:WorkersConfig
-    
+
     # model config
     model_type:Model
     feature_extractor:FeatureExtractorConfig
     # experiments -> environment setups
-    env_configs:List[Union[str, AlExperimentConfig]]    
+    env_configs:List[Union[str, AlExperimentConfig]]
 
     # evaluation config
     evaluation:EvaluationConfig
@@ -383,6 +390,17 @@ class RlExperimentConfig(BaseModel):
             )
         # return env configs
         return v
+
+    @root_validator(pre=False)
+    def check_train_batch_size(cls, values):
+        algo = values['algorithm']
+        workers = values['workers']
+        # check train_batch_size requirements for ppo
+        if algo.algo is Algorithm.PPO:
+            train_batch_size = workers.num_workers * workers.num_envs_per_worker * algo.rollout_fragment_length
+            assert train_batch_size == algo.train_batch_size, "PPO requires train_batch_size = num_envs * rollout_fragment_length (=%i)" % train_batch_size
+        # return values
+        return values
 
     @property
     def ray_config(self) -> Dict[str, Any]:
@@ -420,12 +438,21 @@ def main():
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, required=True, help="Path to valid RL experiment config")
     parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
-    parser.add_argument("--diable-env-checking", action="store_true", help="Disable environment checking before starting experiment")
+    parser.add_argument("--check-envs", action="store_true", help="Check environment before starting experiment.")
+    parser.add_argument("--budget", type=int, default=None, help="Overwrite budget specified in config")
+    parser.add_argument("--query-size", type=int, default=None, help="Overwrite query size specified in config")
+    parser.add_argument("--ray-address", type=str, default='auto', help="Address of ray cluster head node")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Forwards logs to head node")
     # parse arguments
     args = parser.parse_args()
 
-    # parse configuration and apply overwrites
-    config = RlExperimentConfig.parse_file(args.config)    
+    # parse configuration
+    config = RlExperimentConfig.parse_file(args.config)
+    # overwrite budget and query-size in each experiment config
+    for conf in chain(config.env_configs, [config.evaluation.env_config]):
+        conf.active.budget = args.budget or conf.active.budget
+        conf.active.query_size = args.query_size or conf.active.query_size
+
     print("Config:", config.json(indent=2))
 
     # build ray config and add callbacks
@@ -435,31 +462,51 @@ def main():
         LoggingCallbacks
     ])
     ray_config['log_level'] = "INFO"
-    ray_config['disable_env_checking'] = args.disable_env_checking
+    ray_config['disable_env_checking'] = (not args.check_envs)
 
     # connect to ray cluster
-    ray.init(address='auto')
+    ray.init(
+        address=args.ray_address,
+        # set runtime env
+        runtime_env={'working_dir': './'},
+        # setup logging
+        logging_level="INFO",
+        log_to_driver=args.verbose
+    )
 
     # start training
     Tuner(
         config.algorithm.algo.type,
         param_space=ray_config,
+        tune_config=TuneConfig(
+            # stay in working directory set in runtime env
+            chdir_to_trial_dir=False
+        ),
         run_config=RunConfig(
+            # set directory to save training results
+            local_dir="./rl_results",
             # stop config
             stop=dict(
                 timesteps_total=config.algorithm.max_timesteps,
             ),
+            # set up checkpointing
+            checkpoint_config=CheckpointConfig(
+                num_to_keep=3,
+                checkpoint_score_attribute="custom_metrics/Area(F)_mean",
+                checkpoint_score_order="max"
+            ),
             # setup wandb callback
             callbacks=[
                 WandbLoggerCallback(
-                    project="rl-active-learning",
-                    group=None,
+                    project="rl-active-final-v2",
+                    group="%s-%s" % (config.approach.value, config.algorithm.algo.value),
+                    job_type=config.evaluation.env_config.data.dataset_info.builder_name,
                     log_config=False,
                     save_checkpoints=False,
                     config=config.dict()
                 )
             ],
-            verbose=1
+            verbose=0
         ),
     ).fit()
     # shutdown
