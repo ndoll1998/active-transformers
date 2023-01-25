@@ -62,7 +62,7 @@ class ActiveLearningConfig(BaseModel):
     def num_steps(self):
         return ceil(self.budget / self.query_size)
 
-    def build_strategy(self, model:transformers.PreTrainedModel) -> strategies.AbstractStrategy:    
+    def build_strategy(self, model:transformers.PreTrainedModel) -> strategies.AbstractStrategy:
         if self.strategy == 'random':
             return strategies.Random()
         elif self.strategy == 'least-confidence':
@@ -71,12 +71,12 @@ class ActiveLearningConfig(BaseModel):
             return strategies.PredictionEntropy(model)
         elif self.strategy == 'badge' and self.task == Task.SEQUENCE:
             return strategies.BadgeForSequenceClassification(
-                get_encoder_from_model(model), 
+                get_encoder_from_model(model),
                 model.classifier
             )
         elif self.strategy == 'badge' and self.task in [Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING]:
             return strategies.BadgeForTokenClassification(
-                get_encoder_from_model(model), 
+                get_encoder_from_model(model),
                 model.classifier
             )
         elif self.strategy == 'alps':
@@ -117,14 +117,14 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     config.active.budget = budget or config.active.budget
     config.active.query_size = query_size or config.active.query_size
     print("Config:", config.json(indent=2))
-    
+
     # set random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     # load datasets
     ds = config.load_dataset(use_cache=use_cache)
-    
+
     # keep tokenizer around as it is used in event handler
     tokenizer = config.model.tokenizer
     # load model and build strategy
@@ -133,9 +133,9 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     # attach progress bar to strategy
     if not disable_tqdm:
         ProgressBar(ascii=True, desc='Strategy').attach(strategy)
-    
+
     # create trainer, validator and tester engines
-    trainer = config.trainer.build_trainer(model) 
+    trainer = config.trainer.build_trainer(model)
     validator = Evaluator(model)
     tester = Evaluator(model)
     # attach metrics
@@ -172,13 +172,13 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         eval_batch_size=config.trainer.batch_size,
         val_ratio=config.active.val_ratio
     )
-    
+
     @al_engine.on(Events.ITERATION_STARTED)
     def on_started(engine):
         # log active learning step
         i = engine.state.iteration
         print("-" * 8, "AL Step %i" % i, "-" * 8)
-        
+
     @al_engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
     def save_selected_samples(engine):
         # create path to save samples in
@@ -200,7 +200,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     @al_engine.on(Events.ITERATION_COMPLETED)
     def evaluate_and_log(engine):
-        
+
         # create validation and test dataloaders
         val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
         test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
@@ -221,16 +221,21 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             print("Train Entity F-Score:", trainer.state.metrics['train/entity/weighted avg/F'])
             print("Val   Entity F-Score:", val_metrics['val/entity/weighted avg/F'])
             print("Test  Entity F-Score:", test_metrics['test/entity/weighted avg/F'])
-        
+
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
         strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
+        # log total number of tokens annotated
+        tokens_annotated = {
+            '#tokens/train': engine.num_train_tokens,
+            '#tokens/val': engine.num_val_tokens
+        }
         # log all remaining metrics to weights and biases
         wandb.log(
-            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time),
+            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time | tokens_annotated),
             step=len(engine.train_dataset)
         )
-    
+
         # check if there is an output to visualize
         if loop.strategy.output is not None:
             ax, fig = visualize_embeds(loop.strategy)
@@ -238,11 +243,11 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
             # close figure
             plt.close(fig)
-    
+
     # add work saved over sampling metric
     wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
     wss.attach(al_engine, "test/wss")
-   
+
     # add area under learning curve metrics 
     if config.task is Task.SEQUENCE:
         # area under f-score curve
