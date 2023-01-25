@@ -1,3 +1,8 @@
+""" Script to extract the final active-learning metrics from a wandb project.
+    The resulting dataframe contains the respective values averaged over the
+    runs to a specific dataset and strategy pair.
+"""
+
 import wandb
 import numpy as np
 import pandas as pd
@@ -9,7 +14,7 @@ def build_metrics_df(runs, metric_name):
     # i.e. wandb group and job-id
     key = lambda run: (run.group, run.job_type)
     grouped_runs = groupby(sorted(runs, key=key), key=key)
-    
+
     # build metrics dictionary
     metrics_dict = defaultdict(dict)
     for (d, s), runs in grouped_runs:
@@ -25,12 +30,12 @@ def build_metrics_df(runs, metric_name):
 
     # build dataframe
     return pd.DataFrame.from_dict(
-        data=metrics_dict, 
+        data=metrics_dict,
         orient='index'
     )
 
 if __name__ == '__main__':
-    
+
     # get runs from which to generate metrics dataframe
     runs = wandb.Api().runs(
         path="active-final-q25-b1000",
