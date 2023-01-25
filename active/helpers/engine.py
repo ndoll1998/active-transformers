@@ -17,7 +17,7 @@ class ActiveLearningEvents(EventEnum):
         criteria are met.
 
         Events:
-            DATA_SAMPLING_COMPLETE: 
+            DATA_SAMPLING_COMPLETE:
                 called after data is sampled and split into training and validation.
                 The `engine.training_data` and `engine.validation_data` are up to date.
     """
@@ -33,14 +33,14 @@ class ActiveLearningEngine(Engine):
 
         Args:
             trainer (Trainer): model trainer
-            trainer_run_kwargs (Optional[dict]): 
+            trainer_run_kwargs (Optional[dict]):
                 keyword arguments passed to the trainers run method.
                 Sets values like `max_epochs` and `epoch_length`.
-            train_batch_size (Optional[int]): 
+            train_batch_size (Optional[int]):
                 batch size used for model training.
                 Defaults to 32.
-            eval_batch_size (Optional[int]): 
-                batch size used for model evaluation. 
+            eval_batch_size (Optional[int]):
+                batch size used for model evaluation.
                 Defaults to `train_batch_size`.
             val_ratio (Optional[float]):
                 validation data split ratio. Defaults to 0.9 meaning 90% of
@@ -85,6 +85,14 @@ class ActiveLearningEngine(Engine):
         return sum(map(len, self.val_data))
 
     @property
+    def num_train_tokens(self) -> int:
+        return sum(item['attention_mask'].sum() for item in self.train_dataset)
+
+    @property
+    def num_val_tokens(self) -> int:
+        return sum(item['attention_mask'].sum() for item in self.val_dataset)
+
+    @property
     def num_total_samples(self) -> int:
         return self.num_train_samples + self.num_val_samples
 
@@ -92,7 +100,7 @@ class ActiveLearningEngine(Engine):
     def train_dataset(self) -> ConcatDataset:
         """ Training dataset """
         return ConcatDataset(self.train_data)
-    
+
     @property
     def val_dataset(self) -> ConcatDataset:
         """ Validation dataset. Fallback to train dataset if no validation
@@ -104,7 +112,7 @@ class ActiveLearningEngine(Engine):
             return self.train_dataset
 
     def dataloader(self, data:Dataset, **kwargs) -> DataLoader:
-        """ Create the dataloader for a given dataset with some specific configuration.            
+        """ Create the dataloader for a given dataset with some specific configuration.
 
             Args:
                 data (Dataset): dataset to use
@@ -117,7 +125,7 @@ class ActiveLearningEngine(Engine):
 
     def _reset(self):
         """ Event handler to reset the engine, i.e. re-initialize the model,
-            reset optimizer and scheduler states and clear the sampled datasets. 
+            reset optimizer and scheduler states and clear the sampled datasets.
             Called on `STARTED`.
         """
         # re-initialize model and reset optimizer and scheduler states
@@ -134,7 +142,7 @@ class ActiveLearningEngine(Engine):
 
     def step(self, samples:Dataset):
         """ Engines step function implementing a single step of
-            the default active learning procedure 
+            the default active learning procedure
 
             Args:
                 samples (Dataset): samples selected for the active learning step
@@ -146,14 +154,14 @@ class ActiveLearningEngine(Engine):
         n_val = len(samples) - n_train
         # split into train and validation samples
         train_samples, val_samples = random_split(samples, [n_train, n_val])
-        
+
         # add to the respective datasets
         self.train_data.append(train_samples)
         self.val_data.append(val_samples)
 
         # fire data generated event
         self.fire_event(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
-        
+
         # create dataloaders and update validation loader in trainer
         train_loader = self.dataloader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
         self.trainer.val_loader = self.dataloader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
@@ -161,8 +169,8 @@ class ActiveLearningEngine(Engine):
         self.trainer.run(train_loader, **self.trainer_run_kwargs)
 
     def run(
-        self, 
-        loop:ActiveLoop, 
+        self,
+        loop:ActiveLoop,
         steps:Optional[int] =None,
         seed:Optional[int] =None
     ) -> State:
