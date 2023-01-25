@@ -203,7 +203,7 @@ class RecurrentActorCriticModel(ActorCriticModel):
         # add time dimension        
         features = add_time_dimension(
             padded_inputs=features,
-            max_seq_len=seq_lens.max(),
+            seq_lens=seq_lens,
             framework='torch',
             time_major=False
         )
