@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader, random_split
 from active.helpers.trainer import Trainer
 from active.helpers.evaluator import Evaluator
 from active.helpers.metrics import (
-    SeqEvalMetrics, 
+    SeqEvalMetrics,
     NestedSeqEvalMetrics
 )
 # import data processors
@@ -35,18 +35,18 @@ class ForwardForNestedTokenClassification(transformers.PreTrainedModel):
     def forward(self, *args, **kwargs):
         """ Forward function for nested token classification.
             Based on forward for standard token classification.
-        
+
             Output logits are of shape (B, S, E, 3) where B
             is the batch size, S is the sequence length and
             E is the number of classifiers/entities to predict.
-            The final dimension corresponds to BIO labeling scheme.    
+            The final dimension corresponds to BIO labeling scheme.
         """
         # expects dictionary output
         kwargs['return_dict'] = True
         # pop labels from arguments if given
         # to avoid loss-computation in parent
         labels = kwargs.pop('labels') if 'labels' in kwargs else None
-        
+
         # call forward transformer for token classification and reorganize logits
         out = super(ForwardForNestedTokenClassification, self).forward(*args, **kwargs)
         out['logits'] = out.logits.reshape(out.logits.size(0), out.logits.size(1), -1, 3)
@@ -54,12 +54,12 @@ class ForwardForNestedTokenClassification(transformers.PreTrainedModel):
         # compute loss
         if labels is not None:
             out['loss'] = torch.nn.functional.cross_entropy(out.logits.reshape(-1, 3), labels.reshape(-1))
-        
+
         # return output
-        return out 
-        
+        return out
+
 class AutoModelForNestedTokenClassification(object):
-    
+
     @staticmethod
     def from_pretrained(pretrained_ckpt, **kwargs):
         # re-interpret num labels as num entities
@@ -98,7 +98,7 @@ class Task(Enum):
             return AutoModelForNestedTokenClassification
 
         raise ValueError("No model found for task <%s>" % self)
-    
+
     @property
     def processor_type(self) -> Type[Callable]:
         if self is Task.SEQUENCE:
@@ -107,7 +107,7 @@ class Task(Enum):
             return BioTaggingProcessor
         elif self is Task.NESTED_BIO_TAGGING:
             return NestedBioTaggingProcessor
- 
+
         raise ValueError("No data processor found for task <%s>" % self)
 
 class DataConfig(BaseModel):
@@ -129,8 +129,8 @@ class DataConfig(BaseModel):
         # get values
         task = values.get('task')
         dataset = values.get('dataset')
-        text_col = values.get('text_column')        
-        label_col = values.get('label_column')        
+        text_col = values.get('text_column')
+        label_col = values.get('label_column')
         min_seq_len = values.get('min_sequence_length')
         max_seq_len = values.get('max_sequence_length')
         begin_tag_prefix = values.get('begin_tag_prefix')
@@ -146,7 +146,7 @@ class DataConfig(BaseModel):
         except FileNotFoundError as e:
             # handle invalid/unkown datasets
             raise ValueError("Unkown dataset: %s" % dataset) from e
-        
+
         # get dataset info
         info = builder._info()
 
@@ -195,15 +195,15 @@ class DataConfig(BaseModel):
             return tuple(self.dataset_info.features[self.label_column].keys())
 
     def load_dataset(
-        self, 
+        self,
         tokenizer:transformers.PreTrainedTokenizer,
         *,
-        split:Dict[str, str] ={'train': 'train', 'test': 'test'}, 
+        split:Dict[str, str] ={'train': 'train', 'test': 'test'},
         use_cache:bool =False
     ) -> Dict[str, datasets.arrow_dataset.Dataset]:
         # load dataset 
         ds = datasets.load_dataset(self.dataset, split=split)
-        
+
         # create processor
         processor = self.task.processor_type(
             tokenizer=tokenizer,
@@ -212,7 +212,7 @@ class DataConfig(BaseModel):
             label_column=self.label_column,
             label_space=self.label_space,
             begin_tag_prefix=self.begin_tag_prefix,
-            in_tag_prefix=self.in_tag_prefix         
+            in_tag_prefix=self.in_tag_prefix
         )
         # create filter function
         pad_token_id = tokenizer.pad_token_id
@@ -232,10 +232,10 @@ class DataConfig(BaseModel):
                 type='torch',
                 columns=['input_ids', 'attention_mask', 'labels']
             )
-        
+
         # return preprocessed datasets
         return ds
-    
+
     def attach_metrics(self, engine:Engine, tag:str) -> None:
         # create token-level metrics
         L = Average(output_transform=lambda out: out['loss'])
@@ -243,7 +243,7 @@ class DataConfig(BaseModel):
         R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
         P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
         F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
-        
+
         if self.task is Task.SEQUENCE:
             # attach metrics
             L.attach(engine, '%s/L' % tag)
@@ -259,11 +259,11 @@ class DataConfig(BaseModel):
             R.attach(engine, '%s/token/R' % tag)
             P.attach(engine, '%s/token/P' % tag)
             F.attach(engine, '%s/token/F' % tag)
-            
+
             # create and attach sequence level metric
             if self.task is Task.BIO_TAGGING:
                 SeqEvalMetrics(
-                    label_space=self.label_space, 
+                    label_space=self.label_space,
                     output_transform=type(engine).get_logits_labels_mask
                 ).attach(engine, '%s/entity' % tag)
 
@@ -280,7 +280,7 @@ class ModelConfig(BaseModel):
     task:Task = None
     # pretrained model checkpoint
     pretrained_ckpt:str
-    
+
     @validator('pretrained_ckpt')
     def _check_pretrained_ckpt(cls, value):
         try:
@@ -298,7 +298,7 @@ class ModelConfig(BaseModel):
 
     def load_model(self, label_space:Tuple[str]) -> transformers.PreTrainedModel:
         return self.task.model_type.from_pretrained(
-            self.pretrained_ckpt, 
+            self.pretrained_ckpt,
             num_labels=len(label_space)
         )
 
@@ -367,18 +367,18 @@ class ExperimentConfig(BaseModel):
 
 def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     import wandb
-   
+
     config = ExperimentConfig.parse_file(config)
     print("Config:", config.json(indent=2))
 
     # set random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
-    
+
     # load datasets and build trainer
     ds = config.load_dataset(use_cache=use_cache)
     trainer = config.build_trainer()
-    
+
     # split validation dataset from train set
     train_data, test_data = ds['train'], ds['test']
     train_data, val_data = random_split(train_data, [
@@ -390,7 +390,7 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     val_loader = DataLoader(val_data, batch_size=config.trainer.batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
     train_loader = DataLoader(train_data, batch_size=config.trainer.batch_size, shuffle=True)
- 
+
     # set up wandb 
     wandb_config = config.dict(exclude={"active"})
     wandb_config['data']['dataset'] = ds['train'].info.builder_name

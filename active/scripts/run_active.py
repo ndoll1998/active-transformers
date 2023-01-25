@@ -227,11 +227,15 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
         strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
+        # log total number of tokens annotated
+        tokens_annotated = {
+            '#tokens/train': engine.num_train_tokens,
+            '#tokens/val': engine.num_val_tokens
+        }
         # log all remaining metrics to weights and biases
         wandb.log(
-            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time),
-            #step=engine.num_train_samples
-            step=engine.num_train_tokens + engine.num_val_tokens
+            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time | tokens_annotated),
+            step=len(engine.train_dataset)
         )
 
         # check if there is an output to visualize
@@ -241,11 +245,11 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
             # close figure
             plt.close(fig)
-    
+
     # add work saved over sampling metric
     wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
     wss.attach(al_engine, "test/wss")
-   
+
     # add area under learning curve metrics 
     if config.task is Task.SEQUENCE:
         # area under f-score curve

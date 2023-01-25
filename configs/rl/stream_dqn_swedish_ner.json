@@ -36,7 +36,7 @@
         "evaluation_interval": 1,
         "evaluation_duration": 1,
         "evaluation_num_workers": 1,
-        "env_config": "configs/conll2003.json"
+        "env_config": "configs/swedish_ner.json"
     },
 
     "model_type": "stream/dqn-model",
@@ -48,11 +48,11 @@
     },
 
     "env_configs": [
+        "configs/conll2003.json",
         "configs/conll2003_german.json",
         "configs/germaner.json",
         "configs/dane.json",
         "configs/ncbi.json",
-        "configs/swedish_ner.json",
         "configs/german_legal_ner.json",
         "configs/germeval-14.json",
         "configs/peoples_daily_ner.json",

@@ -5,7 +5,7 @@ from typing import List
 class SequenceClassificationProcessor(object):
 
     def __init__(
-        self, 
+        self,
         tokenizer:PreTrainedTokenizer,
         max_length:int,
         text_column:str,
@@ -43,7 +43,7 @@ class BioTaggingProcessor(object):
         self.max_length = max_length
         self.text_column = text_column
         self.label_column = label_column
-       
+
         # map label to id
         label2id = dict(zip(label_space, range(len(label_space))))
         # map begin/in tags to corresponding entities
@@ -72,7 +72,7 @@ class BioTaggingProcessor(object):
             raise ValueError("Bio tagging processor needs fast pretrained tokenizer but got %s" % type(tokenizer).__name__)
 
     def __call__(self, example):
-        
+
         # tokenize
         enc = self.tokenizer(
             text=example[self.text_column],
@@ -112,7 +112,7 @@ class BioTaggingProcessor(object):
         # label-ids above with padding for special tokens
         bio_tags = torch.where(special_tokens_mask, -100, 0)
         bio_tags[~special_tokens_mask] = label_ids
- 
+
         return {
             'input_ids': torch.LongTensor(enc.input_ids),
             'attention_mask': torch.LongTensor(enc.attention_mask),
@@ -121,11 +121,11 @@ class BioTaggingProcessor(object):
 
 class NestedBioTaggingProcessor(object):
     def __init__(
-        self, 
-        tokenizer:PreTrainedTokenizer, 
-        max_length:int, 
-        text_column:str, 
-        label_column:str, 
+        self,
+        tokenizer:PreTrainedTokenizer,
+        max_length:int,
+        text_column:str,
+        label_column:str,
         label_space:List[str],
         **kwargs
     ) -> None:
@@ -138,7 +138,7 @@ class NestedBioTaggingProcessor(object):
         self.begin2in = torch.LongTensor([0, 2, 2])
 
     def __call__(self, example):
-        
+
         # tokenize
         enc = self.tokenizer(
             text=example[self.text_column],
@@ -152,7 +152,7 @@ class NestedBioTaggingProcessor(object):
             return_overflowing_tokens=False,
             return_special_tokens_mask=True
         )
-        
+
         # extract special tokens mask from encoding
         special_tokens_mask = torch.BoolTensor(enc.special_tokens_mask)
 
@@ -162,7 +162,7 @@ class NestedBioTaggingProcessor(object):
         # build label ids tensor
         label_ids = torch.LongTensor([example[self.label_column][et] for et in self.entity_types])
         label_ids = label_ids[:, word_ids]
-       
+
         # handle multiple word-pieces annotated as begin 
         in_mask = (word_ids[:-1] == word_ids[1:])
         label_ids[:, 1:][:, in_mask] = self.begin2in[label_ids[:, 1:][:, in_mask]]

@@ -16,7 +16,7 @@ from active.core.utils.data import NamedTensorDataset
 from tests.common import (
     ClassificationModel,
     ClassificationModelConfig,
-    register_classification_model, 
+    register_classification_model,
 )
 
 class TestTrainer:
@@ -43,7 +43,7 @@ class TestTrainer:
 
         # create dataloader
         loader = self.create_random_loader(4, 2)
-        
+
         # create model, optimizer and scheduler
         model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -65,30 +65,30 @@ class TestTrainer:
         def check_init_weights(engine):
             assert (model.linear.weight == init_weight).all()
             assert (model.linear.bias == init_bias).all()
-            
+
         # on finish make sure the model weights are updated
         @trainer.on(Events.COMPLETED)
         def check_updated_weights(engine):
             assert (model.linear.weight != init_weight).any()
             assert (model.linear.bias != init_bias).any()
-        
+
         # train model
         for _ in range(2):
             trainer.run(loader, max_epochs=2)
 
     @pytest.mark.parametrize('exec_number', range(5))
     def test_incremental_trainer(self, exec_number):
-        """ Test incremental trainer setup, i.e. test if the model of the 
+        """ Test incremental trainer setup, i.e. test if the model of the
             current run matches the output model of the previous one
         """
         # register classification model in transformers AutoModel
         # necessary because the auto-model functionality is used in
         # the trainer to extract the encoder from the model 
         register_classification_model()
-        
+
         # create dataloader
         loader = self.create_random_loader(4, 2)
-        
+
         # create model, optimizer and scheduler
         model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -97,7 +97,7 @@ class TestTrainer:
         # get initial weights of the model
         cur_weight = model.linear.weight.clone()
         cur_bias = model.linear.bias.clone()
-    
+
         # create trainer
         trainer = Trainer(
             model=model,
@@ -111,13 +111,13 @@ class TestTrainer:
         def check_init_weights(engine):
             assert (model.linear.weight == cur_weight).all()
             assert (model.linear.bias == cur_bias).all()
-            
+
         # on finish update the current weights
         @trainer.on(Events.COMPLETED)
         def update_weights(engine):
             cur_weight[:] = model.linear.weight[:]
             cur_bias[:] = model.linear.bias[:]
-        
+
         # train model
         for _ in range(2):
             trainer.run(loader, max_epochs=2)
@@ -130,7 +130,7 @@ class TestTrainer:
         # necessary because the auto-model functionality is used in
         # the trainer to extract the encoder from the model 
         register_classification_model()
-        
+
         # create model, optimizer and scheduler
         model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -145,7 +145,7 @@ class TestTrainer:
             scheduler=scheduler,
             incremental=True,
         )
-   
+
         for (num_samples, num_epochs) in [(4, 1), (16, 1), (4, 4), (16, 4)]:
             # create dataloader
             loader = self.create_random_loader(num_samples, 2)
@@ -154,15 +154,15 @@ class TestTrainer:
             assert scheduler.num_training_steps == len(loader) * num_epochs
 
     def test_min_epoch_length(self):
-        
+
         # register classification model in transformers AutoModel
         # necessary because the auto-model functionality is used in
         # the trainer to extract the encoder from the model 
         register_classification_model()
-        
+
         # create model and optimizer
         model = ClassificationModel(ClassificationModelConfig(2, 2))
-        optim = torch.optim.SGD(model.parameters(), lr=0.01) 
+        optim = torch.optim.SGD(model.parameters(), lr=0.01)
         # create trainer
         trainer = Trainer(model=model, optim=optim)
 
@@ -173,19 +173,19 @@ class TestTrainer:
         # check behavior for specified epoch length
         state = trainer.run([], max_epochs=0, epoch_length=5)
         assert state.epoch_length == 5, "Expected epoch length to match argument"
-        
+
         # check behavior for specified epoch length lower than minimum epoch length
         state = trainer.run([], max_epochs=0, epoch_length=5, min_epoch_length=8)
         assert state.epoch_length == 8, "Expected epoch length to be overwritten by minimum epoch length"
-        
+
         # check behavior for specified epoch length greater than minimum epoch length
         state = trainer.run([], max_epochs=0, epoch_length=5, min_epoch_length=3)
         assert state.epoch_length == 5, "Expected epoch length despite minimum epoch length set"
-        
+
         # check behavior for specified induced epoch length lower than mininum epoch length
         state = trainer.run([0, 0, 0], max_epochs=0, min_epoch_length=8)
         assert state.epoch_length == 8, "Expected induced epoch length to be overwritten by minimum epoch length"
-        
+
         # check behavior for specified induced epoch length greater than minimum epoch length
         state = trainer.run([0, 0, 0], max_epochs=0, min_epoch_length=2)
         assert state.epoch_length == 3, "Expected epoch length to induced epoch length despite minimum epoch length set"
