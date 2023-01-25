@@ -2,44 +2,34 @@
     "approach": "stream",
 
     "algorithm": {
-        "algo": "dqn",
+        "algo": "ppo",
         "algo_config": {
-            "num_atoms": 1,
-            "dueling": false,
-            "v_min": -1,
-            "v_max": 1,
-            "noisy": true,
-            "sigma0": 0.5,
-            "double_q": true,
-            "n_step": 1,
-            "replay_buffer_config": {
-                "capacity": 64000,
-                "prioritize_replay_alpha": 0.6,
-                "prioritize_replay_beta": 0.4,
-                "prioritize_replay_eps": 1e-6
-            },
+            "num_sgd_iter": 8,
+            "sgd_minibatch_size": 32,
+            "entropy_coeff": 0.001,
+            "vf_loss_coeff": 1e-5,
             "lr": 2e-5
         },
         "num_gpus": 1,
-        "rollout_fragment_length": 128,
-        "train_batch_size": 64,
+        "rollout_fragment_length": 64,
+        "train_batch_size": 768,
         "max_timesteps": 2048000
     },
 
     "workers": {
         "num_workers": 12,
         "num_gpus_per_worker": 1,
-        "num_envs_per_worker": 2
+        "num_envs_per_worker": 1
     },
 
     "evaluation": {
         "evaluation_interval": 1,
         "evaluation_duration": 1,
         "evaluation_num_workers": 1,
-        "env_config": "configs/conll2003.json"
+        "env_config": "configs/swedish_ner.json"
     },
 
-    "model_type": "stream/dqn-model",
+    "model_type": "stream/recurrent-actor-critic-model",
     "feature_extractor": {
         "feature_extractor_type": "transformer",
         "pretrained_ckpt": "distilbert-base-multilingual-cased",
@@ -48,11 +38,11 @@
     },
 
     "env_configs": [
+        "configs/conll2003.json",
         "configs/conll2003_german.json",
         "configs/germaner.json",
         "configs/dane.json",
         "configs/ncbi.json",
-        "configs/swedish_ner.json",
         "configs/german_legal_ner.json",
         "configs/germeval-14.json",
         "configs/peoples_daily_ner.json",
