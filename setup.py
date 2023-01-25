@@ -35,10 +35,10 @@ setup(
         "matplotlib>=3.5.2",
         "seqeval>=1.2.2",
         "pydantic>=1.10.2",
-        "ray[default]>=2.1.0"
+        "ray[default]>=2.2.0"
     ],
     extras_require={
-        "rl": ["ray[rllib]>=2.1.0"]
+        "rl": ["ray[rllib]>=2.2.0"]
     },
 
     tests_require=["pytest>=7.1.2"],
@@ -49,4 +49,4 @@ setup(
             "active.rl = active.scripts.run_rl_active:main"
         ]
     }
-) 
+)
