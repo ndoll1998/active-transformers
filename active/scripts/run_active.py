@@ -23,7 +23,7 @@ from pydantic import BaseModel, validator
 # base config and helper function
 from active.scripts.run_train import Task, ExperimentConfig
 
-def visualize_embeds(strategy):
+def visualize_strategy_output(strategy):
     # get selected indices and processing output of unlabeled pool
     idx = strategy.selected_indices
     output = strategy.output
@@ -91,8 +91,6 @@ class ActiveLearningConfig(BaseModel):
             return strategies.EntropyOverMax(model, ignore_labels=[0])
         elif self.strategy == 'entropy-over-max-sample':
             return strategies.EntropyOverMax(model, random_sample=True)
-        elif self.strategy == 'avg-entropy-over-max':
-            return strategies.AvgEntropyOverMax(model)
 
         raise ValueError("Unrecognized strategy: %s" % self.strategy)
 
@@ -110,7 +108,7 @@ class AlExperimentConfig(ExperimentConfig):
         elif isinstance(v, dict):
             return v | {'task': values.get('task')}
 
-def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_cache:bool, disable_tqdm:bool =False):
+def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_cache:bool, disable_tqdm:bool =False, save_samples:bool =False, visualize_embeds:bool =False):
     import wandb
 
     # parse configuration and apply overwrites
@@ -123,6 +121,11 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     # set random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
+    # pre-compute some helpers used later on
+    begin_tag_ids = torch.LongTensor([
+        i for i, tag in enumerate(config.data.label_space)
+        if tag.startswith(config.data.begin_tag_prefix)
+    ])
 
     # load datasets
     ds = config.load_dataset(use_cache=use_cache)
@@ -183,6 +186,9 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     @al_engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
     def save_selected_samples(engine):
+        # check whether to save samples
+        if not save_samples:
+            return
         # create path to save samples in
         path = os.path.join(
             "output",
@@ -190,6 +196,8 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             os.environ.get("WANDB_NAME", "default-run"),
         )
         os.makedirs(path, exist_ok=True)
+        # log
+        print("Saving selected samples to `%s`" % path)
         # get selected samples and re-create input texts
         data = engine.state.batch
         texts = tokenizer.batch_decode(
@@ -197,7 +205,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             skip_special_tokens=True
         )
         # save selected samples to file
-        with open(os.path.join(path, "step-%i.txt" % len(engine.train_dataset)), 'w+') as f:
+        with open(os.path.join(path, "step-%i.txt" % engine.num_total_samples), 'w+') as f:
             f.write('\n'.join(texts))
 
     @al_engine.on(Events.ITERATION_COMPLETED)
@@ -227,22 +235,41 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
         strategy_time = {'times/strategy': strategy_time} if strategy_time is not None else {}
-        # log total number of tokens annotated
-        tokens_annotated = {
-            '#tokens/train': engine.num_train_tokens,
-            '#tokens/val': engine.num_val_tokens
+        # log number of train and validation samples
+        num_samples = {
+            '#docs/train': engine.num_train_samples,
+            '#docs/val': engine.num_val_samples
         }
+        # log total number of tokens in train and test dataset
+        num_tokens = {
+            '#tokens/train': sum(item['attention_mask'].sum() for item in engine.train_dataset),
+            '#tokens/val': sum(item['attention_mask'].sum() for item in engine.val_dataset)
+        }
+        # log total number of entity annotations in current datasets
+        # number of entities matches number of begin tags in datasets
+        num_annotations = {
+            '#annotations/train': sum(
+                torch.isin(item['labels'], begin_tag_ids).sum()
+                for item in engine.train_dataset
+            ),
+            '#annotations/val': sum(
+                torch.isin(item['labels'], begin_tag_ids).sum()
+                for item in engine.val_dataset
+            )
+        } if config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING) else {}
         # log all remaining metrics to weights and biases
         wandb.log(
-            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time | tokens_annotated),
-            step=len(engine.train_dataset)
+            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time | num_samples | num_tokens | num_annotations),
+            step=engine.num_total_samples
         )
 
         # check if there is an output to visualize
-        if loop.strategy.output is not None:
-            ax, fig = visualize_embeds(loop.strategy)
+        # score-based strategies only have score outputs, no need to visualize them
+        if visualize_embeds and (loop.strategy.output is not None) and (not isinstance(loop.strategy, strategies.ScoreBasedStrategy)):
+            print("Visualizing strategy output")
+            ax, fig = visualize_strategy_output(loop.strategy)
             ax.set(title="%s embedding iteration %i (t-SNE)" % (config.active.strategy, engine.state.iteration))
-            wandb.log({"Embedding": wandb.Image(fig)}, step=len(engine.train_dataset))
+            wandb.log({"Embedding": wandb.Image(fig)}, step=engine.num_total_samples)
             # close figure
             plt.close(fig)
 
@@ -252,32 +279,56 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     # add area under learning curve metrics 
     if config.task is Task.SEQUENCE:
-        # area under f-score curve
-        area = AreaUnderLearningCurve(
+        # area under f-score curve w.r.t. number of selected documents
+        area_wrt_docs = AreaUnderLearningCurve(
             output_transform=lambda _: (
-                al_engine.state.iteration,
+                al_engine.num_total_samples,
                 tester.state.metrics['test/F']
             )
         )
-        area.attach(al_engine, "test/Area(F)")
+        area_wrt_docs.attach(al_engine, "test/Area(F|docs)")
 
     elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-        # area under token-level f-score curve
-        area = AreaUnderLearningCurve(
-            output_transform=lambda _: (
-                al_engine.state.iteration,
-                tester.state.metrics['test/token/F']
+        # compute metrics on both token and entity level
+        for scope in ['token', 'entity/weighted avg']:
+            # area under f-score curve w.r.t. number of selected documents
+            area_wrt_docs = AreaUnderLearningCurve(
+                output_transform=lambda _: (
+                    al_engine.num_total_samples,
+                    tester.state.metrics['test/%s/F' % scope]
+                )
             )
-        )
-        area.attach(al_engine, "test/token/Area(F)")
-        # area under entity-level f-score curve
-        area = AreaUnderLearningCurve(
-            output_transform=lambda _: (
-                al_engine.state.iteration,
-                tester.state.metrics['test/entity/weighted avg/F']
+            # area under f-score curve w.r.t. number of tokens
+            area_wrt_tokens = AreaUnderLearningCurve(
+                output_transform=lambda _: (
+                    (
+                        sum(item['attention_mask'].sum() for item in al_engine.train_dataset) + \
+                        sum(item['attention_mask'].sum() for item in al_engine.val_dataset)
+                    ),
+                    tester.state.metrics['test/%s/F' % scope]
+                )
             )
-        )
-        area.attach(al_engine, "test/entity/weighted avg/Area(F)")
+            # area under f-score curve w.r.t. number of annotations
+            area_wrt_annotations = AreaUnderLearningCurve(
+                output_transform=lambda _: (
+                    (
+                        # count the number of annotations (i.e. begin tags) in the
+                        # the current train and validation datasets
+                        sum(
+                            torch.isin(item['labels'], begin_tag_ids).sum()
+                            for item in al_engine.train_dataset
+                        ) + sum(
+                            torch.isin(item['labels'], begin_tag_ids).sum()
+                            for item in al_engine.val_dataset
+                        )
+                    ),
+                    tester.state.metrics['test/%s/F' % scope]
+                )
+            )
+            # attach all metrics to engine
+            area_wrt_docs.attach(al_engine, "test/%s/Area(F|docs)" % scope)
+            area_wrt_tokens.attach(al_engine, "test/%s/Area(F|tokens)" % scope)
+            area_wrt_annotations.attach(al_engine, "test/%s/Area(F|annotations)" % scope)
 
     # initialize wandb
     wandb_config = config.dict()
@@ -312,6 +363,8 @@ def main():
     parser.add_argument("--strategy", type=str, default=None, help="Overwrite strategy specified in config")
     parser.add_argument("--budget", type=int, default=None, help="Overwrite budget specified in config")
     parser.add_argument("--query-size", type=int, default=None, help="Overwrite query size specified in config")
+    parser.add_argument("--save-samples", action='store_true', help="Save samples selected by the strategy to disk")
+    parser.add_argument("--visualize-embeds", action='store_true', help="Visualize strategy embedding for non-score-based strategies")
     # parse arguments
     args = parser.parse_args()
 
