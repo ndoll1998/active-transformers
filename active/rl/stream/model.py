@@ -15,7 +15,7 @@ from typing import Type, List
 from ray.rllib.utils.typing import TensorType, ModelConfigDict
 
 class DQNModel(DQNTorchModel):
-    
+
     @override(DQNTorchModel)
     def __init__(
         self,
@@ -42,7 +42,7 @@ class DQNModel(DQNTorchModel):
 
         # get feature dimension
         feature_size = feature_extractor.feature_size
-        
+
         # initialize super class
         DQNTorchModel.__init__(
             self,
@@ -56,13 +56,13 @@ class DQNModel(DQNTorchModel):
 
         # set feature extractor after module is initialized
         self.feature_extractor = feature_extractor
-        
+
     @override(ModelV2)
     def forward(self, input_dict, state, seq_lens) -> (TensorType, List[TensorType]):
         # extract features
         return self.feature_extractor(input_dict), state
-        
-        
+
+
 class ActorCriticModel(TorchModelV2, nn.Module):
 
     def __init__(
@@ -147,7 +147,7 @@ class RecurrentActorCriticModel(ActorCriticModel):
         # rnn
         lstm_num_layers:int =1,
     ) -> None:
-    
+
         # initialize actor critic module
         super(RecurrentActorCriticModel, self).__init__(
             # observation and action space
@@ -203,7 +203,7 @@ class RecurrentActorCriticModel(ActorCriticModel):
         # add time dimension        
         features = add_time_dimension(
             padded_inputs=features,
-            max_seq_len=seq_lens.max(),
+            seq_lens=seq_lens,
             framework='torch',
             time_major=False
         )
