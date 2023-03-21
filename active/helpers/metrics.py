@@ -134,4 +134,4 @@ class NestedSeqEvalMetrics(SeqEvalMetrics):
             for y_pred_one_entity in y_pred_all_entities
         ]
 
-        return flat_y_true, flat_y_pred
+        return flat_y_pred, flat_y_true
