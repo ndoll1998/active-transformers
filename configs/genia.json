@@ -19,9 +19,9 @@
         "lr": 2e-5,
         "weight_decay": 0.01,
         "batch_size": 32,
-        "max_epochs": 15,
+        "max_epochs": 50,
         "epoch_length": null,
-        "min_epoch_length": 8,
+        "min_epoch_length": 16,
         "early_stopping_patience": 15,
         "accuracy_threshold": 2.0
     },

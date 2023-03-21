@@ -13,7 +13,7 @@
     },
     
     "model": {
-        "pretrained_ckpt": "distilbert-base-uncased"
+        "pretrained_ckpt": "dmis-lab/biobert-base-cased-v1.2"
     },
     
     "trainer": {
