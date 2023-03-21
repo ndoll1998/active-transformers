@@ -14,24 +14,24 @@ import warnings
 from typing import Sequence, Tuple, Any
 
 class Badge(AbstractStrategy):
-    """ Implementation of `Deep Batch Active Learning By Diverse, 
-        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for 
+    """ Implementation of `Deep Batch Active Learning By Diverse,
+        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for
         transformer models.
 
-        Uses the final hidden state computed by the transformer model as 
+        Uses the final hidden state computed by the transformer model as
         embedding, i.e. assumes a linear classifier on top of the hidden
         states. For Sequence Classification tasks the hidden state of the
         first token (usually [CLS]) is used. Note that this architecture is
         not always provided. As an example `BertForSequenceClassification`
         uses pooled outputs instead of the hidden states. To specify
-        specific encoder see `BadgeForSequenceClassification` and 
+        specific encoder see `BadgeForSequenceClassification` and
         `BadgeForTokenClassification`.
-        
+
         Pipeline:
         [input] -> encoder -> [out] -> [out.hidden_states[-1]], [out.logits]
 
         Args:
-            model (PreTrainedModel): 
+            model (PreTrainedModel):
                 pre-trained transformer-based classification model
             is_token_classification (bool):
                 specifies the classification task, i.e. assumes
@@ -63,7 +63,7 @@ class Badge(AbstractStrategy):
             else:
                 warnings.warn("Could not infer task type from model name. Assuming Sequence Classification Task!", UserWarning)
                 self.is_tok_cls = False
-   
+
         # test whether applying the classifier on the extracted embeddings
         # matches the logits predicted by the model
         if hasattr(model, 'classifier'):
@@ -85,12 +85,12 @@ class Badge(AbstractStrategy):
             warnings.warn("Classifier must be linear.", UserWarning)
 
     def _get_logits_and_embeds(self, batch) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
-        """ Get the logits predicted by the model and the embeddings which 
+        """ Get the logits predicted by the model and the embeddings which
             are used for classification.
-            
+
             Args:
                 batch (Any): input batch to apply the model to
-                
+
             Returns:
                 logits (torch.Tensor): predited logits
                 emebds (torch.Tensor): embeddings used for classification
@@ -107,7 +107,7 @@ class Badge(AbstractStrategy):
     @torch.no_grad()
     def process(self, batch:Any) -> torch.FloatTensor:
         """ Compute the hallucinated gradient embeddings of a given batch
-        
+
             Args:
                 batch (Any): input batch
             Returns:
@@ -126,9 +126,18 @@ class Badge(AbstractStrategy):
             mask = batch['attention_mask'].bool()
             w[~mask] = 0.0
         g = w.unsqueeze(-1) * embeds.unsqueeze(-2)
+        # reduce sequence length
+        if self.is_tok_cls:
+            # reduce gradient over sequence length and
+            # entities in case of nested ner
+            g = g.sum(dim=1)
+            # average over sequence length
+            if 'attention_mask' in batch:
+                lengths = batch['attention_mask'].sum(dim=-1)
+                g /= lengths.reshape(-1, 1, 1)
         # return gradient embedding
         return g.flatten(start_dim=1)
-    
+
     def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
         """ Select samples using kmeans++ on the hallucinated gradient embeddings.
 
@@ -149,8 +158,8 @@ class Badge(AbstractStrategy):
         return indices
 
 class BadgeForSequenceClassification(Badge):
-    """ Implementation of `Deep Batch Active Learning By Diverse, 
-        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for 
+    """ Implementation of `Deep Batch Active Learning By Diverse,
+        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for
         transformer-based sequence classification models.
 
         Uses the `pooler_output` field of the encoder output as
@@ -199,12 +208,12 @@ class BadgeForSequenceClassification(Badge):
         return self.classifier(embeds), embeds
 
 class BadgeForTokenClassification(Badge):
-    """ Implementation of `Deep Batch Active Learning By Diverse, 
-        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for 
+    """ Implementation of `Deep Batch Active Learning By Diverse,
+        Uncertain Gradient Lower Bounds` (Ash et al., 2019) for
         transformer-based token classification models.
 
         Uses the final hidden states produced by the encoder as
-        embeddings which are passed to the linear classifier. 
+        embeddings which are passed to the linear classifier.
 
         Pipeline:
         [input] -> encoder -> [out] -> [out.pooler_output] -> classifier -> [logits]
@@ -213,7 +222,7 @@ class BadgeForTokenClassification(Badge):
             encoder (PreTrainedModel): transformer-based encoder
             classifier (nn.Linear): linear classifier
     """
-    
+
     def __init__(
         self,
         encoder:PreTrainedModel,
@@ -229,7 +238,7 @@ class BadgeForTokenClassification(Badge):
         self.classifier = idist.auto_model(classifier)
         # save classification type
         self.is_tok_cls = True
-    
+
     def _get_logits_and_embeds(self, batch:Any) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
         # set model to eval mode
         self.encoder.eval()
