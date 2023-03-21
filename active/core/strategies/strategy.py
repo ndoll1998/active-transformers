@@ -7,8 +7,8 @@ from ignite.engine import Engine, Events
 from ignite.handlers.stores import EpochOutputStore
 # others
 from ..utils.data import (
-    map_tensors, 
-    concat_tensors, 
+    map_tensors,
+    concat_tensors,
     default_collate_drop_labels
 )
 from functools import partial
@@ -52,14 +52,14 @@ class AbstractStrategy(Engine, ABC):
     def selected_indices(self) -> Sequence[int]:
         """ List of indices last selected by the strategy. Indices reference items
             in the unlabeled data pool last processed by the strategy. Returns
-            `None` before the first execution. 
+            `None` before the first execution.
         """
         return self._indices
 
     @abstractmethod
     def process(self, batch:Any) -> Any:
-        """ Process a given batch. Outputs of this function will 
-            be concatenated and passed to the `sample` function. 
+        """ Process a given batch. Outputs of this function will
+            be concatenated and passed to the `sample` function.
 
             Args:
                 batch (Any): a batch of input samples from the unlabeled dataset
@@ -71,8 +71,8 @@ class AbstractStrategy(Engine, ABC):
 
     @abstractmethod
     def sample(self, output:Any, query_size:int) -> Sequence[int]:
-        """ Sample examples given the concatenated output of the process function. 
-            
+        """ Sample examples given the concatenated output of the process function.
+
             Args:
                 output (Any): the concatenated output of the engine run, i.e. the process function.
                 query_size (int): the number of samples to select for labeling
@@ -86,13 +86,13 @@ class AbstractStrategy(Engine, ABC):
         """ Event Handler called on `EPOCH_COMPLETED` (Note that there is no reason
             to run a strategy for more than one epoch). Calls the `sample` function
             and stores the output in the `_indices` attribute of the strategy.
-            
+
             This way tracked time stored in `state.times[`COMPLETED`]` incorporates
             the processing and sampling.
 
             Only called when engine is run by calling `query` function. Not called
             when engine is directly executed by `run` function.
-            
+
             Args:
                 query_size (int): number of data points to sample from pool
                 pool (Dataset): pool of data points from which to sample
@@ -102,9 +102,9 @@ class AbstractStrategy(Engine, ABC):
         assert len(indices) == min(query_size, len(pool))
         # set attribute
         self._indices = indices
-        
+
     def dataloader(self, data:Dataset, **kwargs) -> DataLoader:
-        """ Create the dataloader for a given dataset with some specific configuration.            
+        """ Create the dataloader for a given dataset with some specific configuration.
 
             Args:
                 data (Dataset): dataset to use
@@ -116,13 +116,13 @@ class AbstractStrategy(Engine, ABC):
         return DataLoader(data, **kwargs)
 
     def query(
-        self, 
+        self,
         pool:Dataset,
         query_size:int,
         batch_size:int
     ) -> Sequence[int]:
-        """ Query samples to label using the strategy 
-        
+        """ Query samples to label using the strategy
+
             Args:
                 pool (Dataset): pool of data points from which to sample
                 query_size (int): number of data points to sample from pool

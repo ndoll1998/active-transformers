@@ -3,13 +3,16 @@ __all__ = [
     "LeastConfidence",
     "PredictionEntropy",
     "EntropyOverMax",
+    "BinaryEntropyOverMax",
     "Badge",
     "BadgeForSequenceClassification",
     "BadgeForTokenClassification",
     "Alps",
     "AlpsConstantEmbeddings",
     "EglByTopK",
-    "EglBySampling"
+    "EglBySampling",
+    "LayerEglByTopK",
+    "LayerEglBySampling"
 ]
 
 from .strategy import (
@@ -20,7 +23,8 @@ from .random import Random
 from .uncertainty import (
     LeastConfidence,
     PredictionEntropy,
-    EntropyOverMax
+    EntropyOverMax,
+    BinaryEntropyOverMax
 )
 from .badge import (
     Badge,
@@ -34,4 +38,8 @@ from .alps import (
 from .egl import (
     EglByTopK,
     EglBySampling
+)
+from .layer_egl import (
+    LayerEglByTopK,
+    LayerEglBySampling
 )

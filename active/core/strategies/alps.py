@@ -6,8 +6,8 @@ from torch.utils.data import Subset
 import ignite.distributed as idist
 # import transformers
 from transformers import (
-    PreTrainedModel, 
-    AutoTokenizer, 
+    PreTrainedModel,
+    AutoTokenizer,
     AutoModelForMaskedLM
 )
 # import sklearn
@@ -19,13 +19,13 @@ from ..utils.data import move_to_device
 from typing import Sequence, Any, Optional
 
 class Alps(AbstractStrategy):
-    """ Implementation of ALPS presented in `Cold-Start Active Learning through 
+    """ Implementation of ALPS presented in `Cold-Start Active Learning through
         Self-supervised Language Modeling` (Yuan et al., 2020).
-    
+
         Args:
             model (PreTrainedModel): pretrained transformer model
-            mlm_prob (Optional[float]): 
-                masked-lanugage modeling probability used to generate 
+            mlm_prob (Optional[float]):
+                masked-lanugage modeling probability used to generate
                 targets for loss that builds the surprisal embeddings
                 Defaults to 15%.
             force_non_zero (Optional[bool]):
@@ -73,12 +73,10 @@ class Alps(AbstractStrategy):
         input_ids = batch['input_ids']
 
         # build label mask, i.e. find all candidate tokens for masking
-        mask = input_ids.unsqueeze(-1) == self.special_token_ids.to(idist.device())
-        mask = torch.any(mask, dim=-1)
-        # check mask
+        mask = torch.isin(input_ids, self.special_token_ids.to(idist.device()), invert=True)
         assert torch.any(mask, dim=-1).all(), "Invalid sequence of only special tokens found!"
         # compute probability of each token being masked
-        mask_probs = (1.0 - mask.float()) * self.mlm_prob
+        mask_probs = mask.float() * self.mlm_prob
         label_mask = torch.bernoulli(mask_probs).bool()
         non_zero_mask = torch.any(label_mask, dim=-1)
         # sample until all elements of the batch are valid,
@@ -96,7 +94,7 @@ class Alps(AbstractStrategy):
         # but the loss is only computed for a percentage of the tokens
         out = self.model(**batch)
         loss = F.cross_entropy(
-            out.logits.flatten(end_dim=1), 
+            out.logits.flatten(end_dim=1),
             labels.flatten(),
             reduction='none'
         ).reshape(labels.size())
@@ -107,8 +105,8 @@ class Alps(AbstractStrategy):
         return F.normalize(loss, dim=-1)
 
     def sample(self, output:torch.FloatTensor, query_size:int) -> Sequence[int]:
-        """ Select samples using kmeans clustering on surprisal embeddings 
-        
+        """ Select samples using kmeans clustering on surprisal embeddings
+
             Args:
                 output (torch.FloatTensor): surprisal embeddings
                 query_size (int): number of samples to select
@@ -137,13 +135,13 @@ class Alps(AbstractStrategy):
 class AlpsConstantEmbeddings(Alps):
 
     def query(
-        self, 
+        self,
         pool:Subset,
         query_size:int,
         batch_size:int
     ) -> Sequence[int]:
-        """ Query samples to label using the strategy 
-        
+        """ Query samples to label using the strategy
+
             Args:
                 pool (Subset): pool of data points from which to sample
                 query_size (int): number of data points to sample from pool
