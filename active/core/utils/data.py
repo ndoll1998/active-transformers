@@ -1,6 +1,8 @@
+from __future__ import annotations
 import torch
 from torch import Tensor
-from torch.utils.data import TensorDataset, default_collate
+from torch.utils.data import TensorDataset, Dataset, default_collate
+from tqdm import tqdm
 # typing
 import collections
 from typing import Union, Any, Sequence, Dict, Callable
@@ -17,6 +19,18 @@ class NamedTensorDataset(TensorDataset):
         tensors = super(NamedTensorDataset, self).__getitem__(idx)
         return dict(zip(self.names, tensors))
 
+    @staticmethod
+    def from_dataset(dataset:Dataset) -> NamedTensorDataset:
+        # convert dataset to list of dicts
+        data = [item for item in tqdm(dataset, desc="Converting")]
+        assert all((isinstance(item, dict) for item in dataset)), "Dataset items should be dictionaries"
+        # collate dataset items to tensors
+        data = default_collate(data)
+        assert isinstance(data, dict)
+        assert all((isinstance(t, Tensor) for t in data.values()))
+        # convert to named tensor dataset
+        return NamedTensorDataset(**data)
+
 def default_collate_drop_labels(batch:Any) -> Any:
     # collate batch
     collated_batch = default_collate(batch)
@@ -31,10 +45,10 @@ def default_collate_drop_labels(batch:Any) -> Any:
     return collated_batch
 
 def map_tensors(
-    tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor], 
+    tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor],
     fn:Callable[[Tensor], Any]
 ) -> Union[Dict[Any, Tensor], Sequence[Tensor], Tensor]:
-    
+
     # trivial case
     if isinstance(tensors, Tensor):
         return fn(tensors)
@@ -48,7 +62,7 @@ def map_tensors(
         except TypeError:
             # might not support initialization from interator
             return moved_list
-    
+
     # handle mappings
     elif isinstance(tensors, collections.abc.Mapping):
         moved_dict = {key: map_tensors(tensors[key], fn=fn) for key in tensors}
@@ -58,12 +72,12 @@ def map_tensors(
         except TypeError:
             # might not support initialization from dict
             return moved_dict
-    
+
     # fallback
     return tensors
 
 def move_to_device(
-    tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor], 
+    tensors:Union[Dict[Any, Tensor], Sequence[Tensor], Tensor],
     device:torch.device
 ) -> Union[Dict[Any, Tensor], Sequence[Tensor], Tensor]:
     # move all tensors to the given device
