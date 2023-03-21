@@ -85,14 +85,6 @@ class ActiveLearningEngine(Engine):
         return sum(map(len, self.val_data))
 
     @property
-    def num_train_tokens(self) -> int:
-        return sum(item['attention_mask'].sum() for item in self.train_dataset)
-
-    @property
-    def num_val_tokens(self) -> int:
-        return sum(item['attention_mask'].sum() for item in self.val_dataset)
-
-    @property
     def num_total_samples(self) -> int:
         return self.num_train_samples + self.num_val_samples
 

@@ -23,7 +23,7 @@ from collections import OrderedDict
 from typing import Optional, Iterable
 
 class MemorySaveHandler(BaseSaveHandler, OrderedDict):
-    
+
     def __init__(self, max_length:int =1) -> None:
         super(MemorySaveHandler, self).__init__()
         self.max_length = max_length
@@ -57,10 +57,10 @@ class Trainer(Evaluator):
         Args:
             model (PreTrainedModel): pre-trained transformer model to train
             optim (Optimizer): optimizer to use for parameter updates
-            scheduler (Optional[_LRScheduler]): 
+            scheduler (Optional[_LRScheduler]):
                 learning rate scheduler. Defaults to LambdaLR(optim, lambda _: 1.0).
-            acc_theshold (Optional[float]): 
-                accuracy threshold, training is stopped if threshold is 
+            acc_theshold (Optional[float]):
+                accuracy threshold, training is stopped if threshold is
                 surpassed on training data (Default: 1.0)
             patience (Optional[int]):
                 early stopping patience, training is stopped if no improvement
@@ -76,11 +76,11 @@ class Trainer(Evaluator):
     """
 
     def __init__(
-        self, 
-        model:PreTrainedModel, 
-        optim:Optimizer, 
+        self,
+        model:PreTrainedModel,
+        optim:Optimizer,
         scheduler:Optional[_LRScheduler] =None,
-        acc_threshold:Optional[float] =1.0, 
+        acc_threshold:Optional[float] =1.0,
         patience:Optional[int] =None,
         incremental:Optional[bool] =False,
         val_loader:DataLoader =None
@@ -88,7 +88,7 @@ class Trainer(Evaluator):
         # save arguments
         self.acc_threshold = acc_threshold
         self.incremental = incremental
-        
+
         # get model encoder
         self.encoder = get_encoder_from_model(model)
         # save optimizer and initialize evaluator
@@ -159,7 +159,7 @@ class Trainer(Evaluator):
     def train_accuracy(self) -> float:
         """ Final accuracy on training dataset """
         return self.train_acc.compute()
-    
+
     def step(self, batch):
         """ Training step function executed by the engine. """
         # move to device
@@ -181,7 +181,7 @@ class Trainer(Evaluator):
         return map_tensors(out, fn=lambda t: t.detach().cpu())
 
     def run(
-        self, 
+        self,
         data: Optional[Iterable] =None,
         max_epochs: Optional[int] =None,
         epoch_length: Optional[int] =None,
@@ -195,15 +195,15 @@ class Trainer(Evaluator):
             Args:
                 data (Optional[Iterable]):
                     data (usually a `DataLoader`) to train the model on
-                max_epochs (Optional[int]): 
+                max_epochs (Optional[int]):
                     maximum number of training epochs
-                epoch_length (Optional[int]): 
+                epoch_length (Optional[int]):
                     length of a single training epoch. If provided, the epoch length
                     induced by the length of the dataloader is overwritten.
-                min_epoch_length(Optional[int]): 
+                min_epoch_length(Optional[int]):
                     minimum length of a single training epoch. Overwrites the induced
                     epoch length only if it is too small. This argument is especially
-                    useful in active learning scenarios where the first few training 
+                    useful in active learning scenarios where the first few training
                     steps have only limited data and thus less update steps. Setting
                     `min_epoch_length` ensures a constant minumum number of updates.
             Returns:
@@ -225,10 +225,10 @@ class Trainer(Evaluator):
         )
 
     def _load_init_ckpt(self, force:bool =False):
-        """ Event handler to load the initial checkpoints. Called on `STARTED`. 
+        """ Event handler to load the initial checkpoints. Called on `STARTED`.
 
             Args:
-                force (Optional[bool]): 
+                force (Optional[bool]):
                     whether to force reset the model and optimizer even if
                     the incremental attribute is set to True.
         """
@@ -253,8 +253,8 @@ class Trainer(Evaluator):
             )
 
     def _check_convergence(self):
-        """ Event handler stopping training when training accuracy 
-            threshold is surpassed. Called on 'EPOCH_COMPLTED'. 
+        """ Event handler stopping training when training accuracy
+            threshold is surpassed. Called on 'EPOCH_COMPLTED'.
         """
         # evaluate model on train set and check accuracy
         if (self.train_accuracy >= self.acc_threshold):

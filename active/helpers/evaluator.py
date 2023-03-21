@@ -53,14 +53,14 @@ class Evaluator(Engine):
     def get_logits_labels_mask(cls, out:dict):
         logits, labels = out['logits'], out['labels']
         return logits, labels, (labels >= 0)
-    
+
     @classmethod
     def get_logits_and_labels(cls, out:dict):
         """ Function to extract the logits and labels from the model output.
             Can be used as `output_transform` in ignite metrics.
-        
+
             Args:
-                out (dict): 
+                out (dict):
                     output of a forward call to the `PreTrainedModel`.
 
             Returns:

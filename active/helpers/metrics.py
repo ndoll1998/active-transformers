@@ -13,8 +13,8 @@ class SeqEvalMetrics(Metric):
         self.label_space = label_space
 
     def build_y_pred_and_true(
-        self, 
-        logits:torch.FloatTensor, 
+        self,
+        logits:torch.FloatTensor,
         labels:torch.LongTensor,
         mask:torch.BoolTensor
     ) -> Tuple[List[List[str]], List[List[str]]]:
@@ -50,7 +50,7 @@ class SeqEvalMetrics(Metric):
         y_pred, y_true = self.build_y_pred_and_true(*out)
         self.y_true.append(y_true)
         self.y_pred.append(y_pred)
-    
+
     def compute(self):
         # compute metrics
         metrics = classification_report(
@@ -87,7 +87,7 @@ class NestedSeqEvalMetrics(SeqEvalMetrics):
 
         # initialize metric
         super(NestedSeqEvalMetrics, self).__init__(label_space=label_space, **kwargs)
-    
+
         # build entity dimension offsets
         self.offsets = 3 * torch.arange(self.num_entities)
 
@@ -96,14 +96,14 @@ class NestedSeqEvalMetrics(SeqEvalMetrics):
         return len(self.entity_types)
 
     def build_y_pred_and_true(
-        self, 
-        logits:torch.FloatTensor, 
+        self,
+        logits:torch.FloatTensor,
         labels:torch.LongTensor,
         mask:torch.BoolTensor
     ) -> Tuple[List[List[str]], List[List[str]]]:
         # compute predictions
         y_pred = logits.argmax(dim=-1)
-        y_true = labels 
+        y_true = labels
         # check shapes
         assert y_true.ndim == y_pred.ndim == 3
         assert y_true.size(1) == y_pred.size(1) # sequence length
@@ -117,7 +117,7 @@ class NestedSeqEvalMetrics(SeqEvalMetrics):
         # lookup in label space
         y_true[mask, :] += self.offsets.reshape(1, -1)
         y_pred[mask, :] += self.offsets.reshape(1, -1)
-        
+
         # re-organize to nested lists of sequences
         y_true = y_true.transpose(1, 2).cpu().tolist()
         y_pred = y_pred.transpose(1, 2).cpu().tolist()

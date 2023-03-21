@@ -2,6 +2,33 @@ import torch
 from transformers import PreTrainedTokenizer
 from typing import List
 
+class MinSequenceLengthFilter(object):
+    """ Filter function filtering out all elements with the
+        too few valid tokens (i.e. non-special tokens)
+
+        On top of ignoreing padding tokens, this also includes
+        unknown tokens and other spacial tokens specific to the tokenizer
+    """
+
+    def __init__(
+        self,
+        tokenizer:PreTrainedTokenizer,
+        min_seq_length:int =0
+    ):
+        assert min_seq_length >= 0, "Minimum sequence length should be positive"
+        # save the set of special token ids and the minimum sequence length
+        # that a given example must fulfill
+        self.special_token_ids = torch.LongTensor(tokenizer.all_special_ids)
+        self.min_seq_length = min_seq_length
+
+    def __call__(self, example):
+        # compute valid sequence length
+        return torch.isin(
+            torch.LongTensor(example['input_ids']),
+            self.special_token_ids,
+            invert=True
+        ).sum() > self.min_seq_length
+
 class SequenceClassificationProcessor(object):
 
     def __init__(
