@@ -11,11 +11,11 @@ from typing import Sequence, Any, Optional
 
 class UncertaintyStrategy(ScoreBasedStrategy):
     """ Abstract Base Class for uncertainty-based sampling strategies.
-           
+
         Args:
             model (PreTrainedModel): transformer-based model used for prediction
             ignore_labels (Optional[Sequence[int]]): list of labels to ignore for computation of uncertainty scores
-            random_sample (Optional[bool]): 
+            random_sample (Optional[bool]):
                 whether to random sample query according to distribution given by uncertainty scores.
                 Defaults to False, meaning the elements with maximum uncertainty scores are selected.
     """
@@ -47,7 +47,7 @@ class UncertaintyStrategy(ScoreBasedStrategy):
             by computing their average, which is implemented in this function.
 
             Args:
-                scores (torch.FloatTensor): 
+                scores (torch.FloatTensor):
                     uncertainty scores of shape (B, S, ...) where
                     B is the batch size and S is the sequence length.
                     Note that for nested nested token classification
@@ -77,7 +77,7 @@ class UncertaintyStrategy(ScoreBasedStrategy):
         probs = torch.softmax(logits, dim=-1)
         # compute uncertainty scores
         scores = self.uncertainty_measure(probs)
-        assert scores.size() == logits.size()[:scores.ndim]        
+        assert scores.size() == logits.size()[:scores.ndim]
 
         # ignore labels
         _, labels = logits.max(dim=-1)
@@ -112,7 +112,7 @@ class PredictionEntropy(UncertaintyStrategy):
         return torch.special.entr(probs).sum(dim=-1)
 
 class EntropyOverMax(UncertaintyStrategy):
-    """ Uncertainty Sampling Strategy for token classification tasks. Computes the entropy over the maximum 
+    """ Uncertainty Sampling Strategy for token classification tasks. Computes the entropy over the maximum
         predicted probability of each token. See Equation (4.1) in Joey Oehman (2021).
 
         Args:
@@ -121,7 +121,7 @@ class EntropyOverMax(UncertaintyStrategy):
 
         References:
             - Joey Oehman, Active Learning for Named Entity Recognition with Swedish Language Models, 2021
-    """    
+    """
 
     def uncertainty_measure(self, probs:torch.FloatTensor) -> torch.FloatTensor:
         # only makes sense for (nested) token-classification tasks
@@ -129,12 +129,41 @@ class EntropyOverMax(UncertaintyStrategy):
         # only take the maximum over label space here to match expected shapes
         # in process and reduce score functions
         return probs.max(dim=-1).values
-    
+
     def reduce_scores(self, scores:torch.FloatTensor, mask:torch.BoolTensor) -> torch.FloatTensor:
-        # take maximum over classifiers/entities in case of nested
-        # token classification tasks, for other tasks this does nothing
-        scores = scores.reshape(scores.size(0), scores.size(1), -1).max(dim=-1).values
+
+        # compute valid sequence lengths and avoid division by zero
+        lengths = mask.sum(dim=1, keepdims=True)
+        lengths = torch.maximum(lengths, torch.ones_like(lengths))
         # note that scores at ~mask are already set to zero
         # and entropy is defined to be zero at x=0 
         # (see https://pytorch.org/docs/stable/special.html)
-        return torch.special.entr(scores).sum(dim=-1)
+        return (torch.special.entr(scores) / lengths).flatten(start_dim=1).sum(dim=1)
+
+class BinaryEntropyOverMax(EntropyOverMax):
+    """ Uncertainty Sampling Strategy for token classification tasks. Computes the entropy over the maximum
+        predicted probability of each token. See Equation (4.1) in Joey Oehman (2021).
+
+        Args:
+            model (PreTrainedModel): transformer-based model used for prediction
+            ignore_labels (Optional[Sequence[int]]): list of labels to ignore for computation of uncertainty scores
+
+        References:
+            - Joey Oehman, Active Learning for Named Entity Recognition with Swedish Language Models, 2021
+    """
+
+    def reduce_scores(self, scores:torch.FloatTensor, mask:torch.BoolTensor) -> torch.FloatTensor:
+        # compute the number of valid scores from mask
+        # also avoid division by zero errors
+        n_valids = mask.sum(dim=-1)
+        n_valids = torch.maximum(n_valids, torch.ones_like(n_valids))
+        # flatten out dimension of classifier/entities in case of nested
+        # token classification tasks, leading to summation over entities
+        scores = scores.flatten(start_dim=1)
+        # note that scores at ~mask are already set to zero
+        # and entropy is defined to be zero at x=0 
+        # (see https://pytorch.org/docs/stable/special.html)
+        return (
+            torch.special.entr(scores) + \
+            torch.special.entr(1.0 - scores)
+        ).sum(dim=-1) / n_valids
