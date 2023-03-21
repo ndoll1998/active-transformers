@@ -41,7 +41,7 @@ class TestGoodfellowGradientNorm:
                 # compute norm and check
                 manual_norm = sum((p.grad * p.grad).sum() for n, p in model.named_parameters())
                 assert torch.allclose(manual_norm, goodfellow_norm[i]), "%.04f != %.04f" % (manual_norm, goodfellow_norm[i])
-    
+
     @pytest.mark.parametrize('exec_number', range(5))
     def test_goodfellow_grad_norm_multiple_backward_passes(self, exec_number):
         """ Test multi-backward pass of Goodfellow Norm Computation """
@@ -85,4 +85,5 @@ class TestGoodfellowGradientNorm:
                     fn(model.forward(x[i:i+1])).backward()
                     # compute norm
                     manual_norm = sum((p.grad * p.grad).sum() for n, p in model.named_parameters())
-                    assert torch.allclose(manual_norm, goodfellow_norm[i, j]), "%.04f != %.04f" % (manual_norm, goodfellow_norm[i, j])
+                    assert torch.allclose(manual_norm, goodfellow_norm[i, j]), "%.05f != %.04f" % (manual_norm, goodfellow_norm[i, j])
+

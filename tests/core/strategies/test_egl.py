@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from active.core.utils.data import NamedTensorDataset
 # import common components
 from tests.common import (
-    ClassificationModel, 
+    ClassificationModel,
     ClassificationModelConfig,
 )
 # import egl strategies
@@ -18,7 +18,7 @@ class TestExpectedGradientLength:
     """ Test cases for Expected Gradient Length """
 
     def test_expected_grad_norm_by_top_k_labels(self):
-        """ Test if EGL strategy runs without errors 
+        """ Test if EGL strategy runs without errors
             Scenario:
                 - Task: Sequence Classification
                 - Strategy: EglByTopK
@@ -33,9 +33,9 @@ class TestExpectedGradientLength:
             query_size=4,
             batch_size=16
         )
-    
+
     def test_expected_grad_norm_by_random_sampling(self):
-        """ Test if EGL strategy runs without errors 
+        """ Test if EGL strategy runs without errors
             Scenario:
                 - Task: Token Classification
                 - Strategy: EglBySampling
