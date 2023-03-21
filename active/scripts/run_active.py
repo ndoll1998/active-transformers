@@ -9,6 +9,7 @@ from active.core.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
 from active.helpers.engine import ActiveLearningEvents, ActiveLearningEngine
 from active.helpers.evaluator import Evaluator
 from active.core.utils.model import get_encoder_from_model
+from active.core.utils.data import NamedTensorDataset
 # import ignite
 from ignite.engine import Events
 from ignite.metrics import ConfusionMatrix
@@ -62,35 +63,49 @@ class ActiveLearningConfig(BaseModel):
     def num_steps(self):
         return ceil(self.budget / self.query_size)
 
+    @property
+    def strategy_kwargs(self) -> dict:
+        # parse keyword arguments from strategy identifier string
+        if ('[' in self.strategy) and (']' in self.strategy):
+            kwargs = self.strategy.split('[', 1)[1].rsplit(']', 1)[0]
+            return eval(f"dict({kwargs})")
+        else:
+            # no argument supplied
+            return dict()
+
     def build_strategy(self, model:transformers.PreTrainedModel) -> strategies.AbstractStrategy:
-        if self.strategy == 'random':
-            return strategies.Random()
-        elif self.strategy == 'least-confidence':
-            return strategies.LeastConfidence(model)
-        elif self.strategy == 'prediction-entropy':
-            return strategies.PredictionEntropy(model)
-        elif self.strategy == 'badge' and self.task == Task.SEQUENCE:
+        if self.strategy.startswith('random'):
+            return strategies.Random(**self.strategy_kwargs)
+        elif self.strategy.startswith('least-confidence'):
+            return strategies.LeastConfidence(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('prediction-entropy'):
+            return strategies.PredictionEntropy(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('badge') and self.task == Task.SEQUENCE:
             return strategies.BadgeForSequenceClassification(
                 get_encoder_from_model(model),
-                model.classifier
+                model.classifier,
+                **self.strategy_kwargs
             )
-        elif self.strategy == 'badge' and self.task in [Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING]:
+        elif self.strategy.startswith('badge') and self.task in [Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING]:
             return strategies.BadgeForTokenClassification(
                 get_encoder_from_model(model),
-                model.classifier
+                model.classifier,
+                **self.strategy_kwargs
             )
-        elif self.strategy == 'alps':
-            return strategies.AlpsConstantEmbeddings(model, mlm_prob=0.15)
-        elif self.strategy == 'egl':
-            return strategies.EglByTopK(model, k=5)
-        elif self.strategy == 'egl-sampling':
-            return strategies.EglBySampling(model, k=8)
-        elif self.strategy == 'entropy-over-max':
-            return strategies.EntropyOverMax(model)
-        elif self.strategy == 'entropy-over-max-ignore':
-            return strategies.EntropyOverMax(model, ignore_labels=[0])
-        elif self.strategy == 'entropy-over-max-sample':
-            return strategies.EntropyOverMax(model, random_sample=True)
+        elif self.strategy.startswith('alps'):
+            return strategies.AlpsConstantEmbeddings(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('egl-topk'):
+            return strategies.EglByTopK(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('egl-sampling'):
+            return strategies.EglBySampling(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('layer-egl-topk'):
+            return strategies.LayerEglByTopK(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('layer-egl-sampling'):
+            return strategies.LayerEglBySampling(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('entropy-over-max'):
+            return strategies.EntropyOverMax(model, **self.strategy_kwargs)
+        elif self.strategy.startswith('binary-entropy-over-max'):
+            return strategies.BinaryEntropyOverMax(model, **self.strategy_kwargs)
 
         raise ValueError("Unrecognized strategy: %s" % self.strategy)
 
@@ -121,14 +136,21 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     # set random seed
     torch.manual_seed(seed)
     np.random.seed(seed)
+
     # pre-compute some helpers used later on
-    begin_tag_ids = torch.LongTensor([
-        i for i, tag in enumerate(config.data.label_space)
-        if tag.startswith(config.data.begin_tag_prefix)
-    ])
+    if config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
+        begin_tag_ids = torch.LongTensor(
+            [1] if config.task is Task.NESTED_BIO_TAGGING else \
+            [
+                i for i, tag in enumerate(config.data.label_space)
+                if tag.startswith(config.data.begin_tag_prefix)
+            ]
+        )
 
     # load datasets
     ds = config.load_dataset(use_cache=use_cache)
+    train_data = NamedTensorDataset.from_dataset(ds['train'])
+    test_data = NamedTensorDataset.from_dataset(ds['test'])
 
     # keep tokenizer around as it is used in event handler
     tokenizer = config.model.tokenizer
@@ -163,11 +185,11 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     # create active learning loop
     loop = ActiveLoop(
-        pool=ds['train'],
+        pool=train_data,
         strategy=strategy,
         batch_size=config.trainer.batch_size,
         query_size=config.active.query_size,
-        init_strategy=strategy if isinstance(strategy, strategies.Alps) else strategies.Random()
+        init_strategy=strategy #if isinstance(strategy, strategies.Alps) else strategies.Random()
     )
     # create active learning engine
     al_engine = ActiveLearningEngine(
@@ -209,18 +231,19 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             f.write('\n'.join(texts))
 
     @al_engine.on(Events.ITERATION_COMPLETED)
-    def evaluate_and_log(engine):
+    def test_and_log(engine):
 
         # create validation and test dataloaders
-        val_loader = DataLoader(engine.val_dataset, batch_size=64, shuffle=False)
-        test_loader = DataLoader(ds['test'], batch_size=64, shuffle=False)
+        val_loader = DataLoader(engine.val_dataset, batch_size=config.trainer.batch_size, shuffle=False)
+        test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
         # evaluate on val and test set
         val_metrics = validator.run(val_loader).metrics
         test_metrics = tester.run(test_loader).metrics
         # don't log test confusion matrix
         test_metrics = test_metrics.copy()
         test_metrics.pop('cm')
-        # log both train and test metrics
+
+        # log metrics
         print("Step:", engine.state.iteration, "-" * 15)
         print("Training Converged:", trainer.converged)
         if config.task is Task.SEQUENCE:
@@ -332,7 +355,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     # initialize wandb
     wandb_config = config.dict()
-    wandb_config['data']['dataset'] = ds['train'].info.builder_name
+    wandb_config['data']['dataset'] = config.data.dataset_info.builder_name
     wandb_config['seed'] = seed
     wandb.init(
         config=wandb_config,

@@ -11,10 +11,12 @@ from active.helpers.metrics import (
 )
 # import data processors
 from active.helpers.processor import (
+    MinSequenceLengthFilter,
     BioTaggingProcessor,
     NestedBioTaggingProcessor,
     SequenceClassificationProcessor
 )
+from active.core.utils.data import NamedTensorDataset
 # import ignite
 from ignite.engine import Engine, Events
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
@@ -199,10 +201,18 @@ class DataConfig(BaseModel):
         tokenizer:transformers.PreTrainedTokenizer,
         *,
         split:Dict[str, str] ={'train': 'train', 'test': 'test'},
-        use_cache:bool =False
+        use_cache:bool =False,
+        max_data_points:int =25_000
     ) -> Dict[str, datasets.arrow_dataset.Dataset]:
         # load dataset 
         ds = datasets.load_dataset(self.dataset, split=split)
+
+        # cut datasets if they are too large
+        for key, data in ds.items():
+            if len(data) > max_data_points:
+                rand_idx = np.random.choice(len(data), max_data_points, replace=False)
+                ds[key] = data.select(rand_idx)
+            assert len(ds[key]) <= max_data_points
 
         # create processor
         processor = self.task.processor_type(
@@ -215,8 +225,10 @@ class DataConfig(BaseModel):
             in_tag_prefix=self.in_tag_prefix
         )
         # create filter function
-        pad_token_id = tokenizer.pad_token_id
-        filter_ = lambda e: (np.asarray(e['input_ids']) != pad_token_id).sum() > self.min_sequence_length
+        filter_ = MinSequenceLengthFilter(
+            tokenizer=tokenizer,
+            min_seq_length=self.min_sequence_length
+        )
 
         # preprocess datasets
         ds = {
@@ -386,6 +398,20 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
         len(train_data) - int(0.8 * len(train_data))
     ])
 
+    # convert all datasets to tensordatasets
+    train_data = NamedTensorDataset.from_dataset(train_data)
+    val_data = NamedTensorDataset.from_dataset(val_data)
+    test_data = NamedTensorDataset.from_dataset(test_data)
+
+    # count total number of tokens in train split
+    n_tokens = sum((item['attention_mask'].sum().item() for item in train_data))
+    print("#Train Tokens:", n_tokens)
+
+    n_annotations = sum((item['labels'] == 1).sum() for item in train_data)
+    print('#Annotations:', n_annotations)
+
+    exit()
+
     # create dataloaders
     val_loader = DataLoader(val_data, batch_size=config.trainer.batch_size, shuffle=False)
     test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
@@ -401,7 +427,9 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
         group=config.name
     )
 
-    # create the validater and tester
+    # set valition dataset in trainer
+    trainer.val_loader = val_loader
+    # create tester engine
     validator = Evaluator(trainer.unwrapped_model)
     tester = Evaluator(trainer.unwrapped_model)
     # attach metrics
@@ -413,7 +441,7 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
         ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
         ProgressBar(ascii=True, desc='Validating').attach(validator)
         ProgressBar(ascii=True, desc='Testing').attach(tester)
-    
+
     # add event handler for testing and logging
     @trainer.on(Events.EPOCH_COMPLETED)
     def test_and_log(engine):
@@ -432,7 +460,7 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
             print("Test  Entity F-Score:", test_state.metrics['test/entity/weighted avg/F'])
         # log all metrics to weights and biases 
         wandb.log(
-            test_state.metrics | val_state.metrics | engine.state.metrics, 
+            test_state.metrics | val_state.metrics | engine.state.metrics,
             step=engine.state.iteration
         )
 
@@ -448,9 +476,9 @@ def main():
     parser.add_argument("--seed", type=int, default=1337, help="Random Seed")
     # parse arguments
     args = parser.parse_args()
-    
+
     # train model
     train(**vars(args))
 
 if __name__ == '__main__':
-    main() 
+    main()
