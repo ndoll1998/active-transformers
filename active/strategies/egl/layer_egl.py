@@ -3,43 +3,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 import ignite.distributed as idist
 # base strategy and utils
-from .strategy import ScoreBasedStrategy
-from ..utils.data import move_to_device
-from ..utils.gradnorm import GoodfellowGradientNorm
-from ..utils.sequence import topk_sequences
+from ..score import ScoreBasedStrategy
+from active.engine.strategy import ActiveStrategy
+from active.utils.data import move_to_device
+from .gradnorm import GoodfellowGradientNorm
+from .sequence import topk_sequences
 # import transformers and others
 from transformers import PreTrainedModel
 from abc import abstractmethod
 from typing import Tuple, Sequence, Any, Union, Optional
 
+from sklearn.cluster._kmeans import kmeans_plusplus
+
 __all__ = [
-    "EglByTopK",
-    "EglBySampling"
+    "LayerEglByTopK",
+    "LayerEglBySampling"
 ]
 
-class AbstractEgl(ScoreBasedStrategy):
-    """ Abstract Base for Maximum Expected Gradient Length Sampling
-        Strategy. Assumes cross-entropy loss. Child classes must
-        overwrite the abstract method `_get_hallucinated_labels`
-        which generates the labels for gradient computations.
 
-        Args:
-            model (PreTrainedModel):
-                transformer-based sequence classification model
-            random_sample (Optional[bool]):
-                whether to random sample query according to distribution given by expected gradient length.
-                Defaults to False, meaning the elements with maximum expected gradient langth are selected.
-    """
+# TODO: this should share core with AbstractEgl
+class AbstractLayerEgl(ActiveStrategy):
 
     def __init__(
         self,
         model:PreTrainedModel,
-        random_sample:Optional[bool] =False
     ) -> None:
         # initialize strategy
-        super(AbstractEgl, self).__init__(
-            random_sample=random_sample
-        )
+        super(AbstractLayerEgl, self).__init__()
         # move model to available device(s)
         self.model = idist.auto_model(model)
 
@@ -114,11 +104,18 @@ class AbstractEgl(ScoreBasedStrategy):
                 #longer sequences, note that loss is reduced by summation
                 n_valids = (labels.flatten(start_dim=1) != -100).sum(dim=-1)
                 # sum norms of tokens in case of sequence tagging tasks
-                squarred_norm = gradnorm.compute().reshape(probs.size(0), -1, labels.size(-1))
-                return torch.sum(probs * squarred_norm.sum(dim=1), dim=1) / n_valids
+                squarred_norm = gradnorm.per_module().transpose(0, 1)
+                squarred_norm = squarred_norm.reshape(probs.size(0), squarred_norm.size(1), -1, labels.size(-1))
+                return torch.sum(probs[:, None, :] * squarred_norm.sum(dim=2), dim=2) / n_valids.reshape(-1, 1)
 
+    def sample(self, output, query_size):
+        _, indices = kmeans_plusplus(
+            X=output.numpy(),
+            n_clusters=query_size
+        )
+        return indices
 
-class EglByTopK(AbstractEgl):
+class LayerEglByTopK(AbstractLayerEgl):
     """ Implements Maximum Expected Gradient Length Sampling Strategy
         by selecting the top-k predictions as labels for gradient
         computation. Assumes cross-entropy loss.
@@ -137,7 +134,7 @@ class EglByTopK(AbstractEgl):
         k:int =5,
     ) -> None:
         # initialize strategy
-        super(EglByTopK, self).__init__(model)
+        super(LayerEglByTopK, self).__init__(model)
         self.k = k
 
     @torch.no_grad()
@@ -204,7 +201,7 @@ class EglByTopK(AbstractEgl):
 
         raise NotImplementedError()
 
-class EglBySampling(AbstractEgl):
+class LayerEglBySampling(AbstractLayerEgl):
     """ Implements Maximum Expected Gradient Length Sampling Strategy
         by random sampling labels from the predicted label distribution.
         Assumes cross-entropy loss.
@@ -223,7 +220,7 @@ class EglBySampling(AbstractEgl):
         k:int =8,
     ) -> None:
         # initialize strategy
-        super(EglBySampling, self).__init__(model)
+        super(LayerEglBySampling, self).__init__(model)
         self.k = k
 
     @torch.no_grad()

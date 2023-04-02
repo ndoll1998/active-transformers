@@ -3,16 +3,18 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 # import active learning components
-from active.core import strategies
-from active.core.loop import ActiveLoop
-from active.core.metrics import AreaUnderLearningCurve, WorkSavedOverSampling
-from active.helpers.engine import ActiveLearningEvents, ActiveLearningEngine
-from active.helpers.evaluator import Evaluator
-from active.core.utils.model import get_encoder_from_model
-from active.core.utils.data import NamedTensorDataset
+from active import (
+    ActiveLoop,
+    ActiveEngine,
+    ActiveEvents,
+    strategies
+)
+# utils
+from active.utils.model import get_encoder_from_model
+from active.utils.data import NamedTensorDataset
+from active.engine.strategy import ActiveStrategy
 # import ignite
 from ignite.engine import Events
-from ignite.metrics import ConfusionMatrix
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 # dimensionality reduction
 from sklearn.manifold import TSNE
@@ -22,7 +24,7 @@ from math import ceil
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, validator
 # base config and helper function
-from active.scripts.run_train import Task, ExperimentConfig
+from active.scripts.run_train_v2 import Task, ExperimentConfig
 
 def visualize_strategy_output(strategy):
     # get selected indices and processing output of unlabeled pool
@@ -57,7 +59,7 @@ class ActiveLearningConfig(BaseModel):
     budget:int
     query_size:int
     # validation split
-    val_ratio:float =0.9
+    train_val_split:float =0.9
 
     @property
     def num_steps(self):
@@ -73,7 +75,7 @@ class ActiveLearningConfig(BaseModel):
             # no argument supplied
             return dict()
 
-    def build_strategy(self, model:transformers.PreTrainedModel) -> strategies.AbstractStrategy:
+    def build_strategy(self, model:transformers.PreTrainedModel) -> ActiveStrategy:
         if self.strategy.startswith('random'):
             return strategies.Random(**self.strategy_kwargs)
         elif self.strategy.startswith('least-confidence'):
@@ -128,6 +130,9 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     # parse configuration and apply overwrites
     config = AlExperimentConfig.parse_file(config)
+    config.trainer.seed = seed
+    config.trainer.data_seed = seed
+    config.trainer.disable_tqdm |= disable_tqdm
     config.active.strategy = strategy or config.active.strategy
     config.active.budget = budget or config.active.budget
     config.active.query_size = query_size or config.active.query_size
@@ -154,50 +159,25 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
 
     # keep tokenizer around as it is used in event handler
     tokenizer = config.model.tokenizer
-    # load model and build strategy
-    model = config.load_model()
-    strategy = config.active.build_strategy(model)
+    # create trainer and strategy
+    trainer = config.build_trainer()
+    strategy = config.active.build_strategy(trainer.model)
     # attach progress bar to strategy
     if not disable_tqdm:
         ProgressBar(ascii=True, desc='Strategy').attach(strategy)
-
-    # create trainer, validator and tester engines
-    trainer = config.trainer.build_trainer(model)
-    validator = Evaluator(model)
-    tester = Evaluator(model)
-    # attach metrics
-    config.data.attach_metrics(trainer, tag="train")
-    config.data.attach_metrics(validator, tag="val")
-    config.data.attach_metrics(tester, tag="test")
-    # attach progress bar
-    if not disable_tqdm:
-        ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
-        ProgressBar(ascii=True, desc='Validating').attach(validator)
-        ProgressBar(ascii=True, desc='Testing').attach(tester)
-    # attach confusion matrix metric to tester
-    # needed for some active learning metrics
-    ConfusionMatrix(
-        # for nested bio tagging the label space is the entity
-        # types, however the confusion matrix is computed over B,I,O tags
-        num_classes=3 if config.task is Task.NESTED_BIO_TAGGING else len(config.data.label_space),
-        output_transform=tester.get_logits_and_labels
-    ).attach(tester, "cm")
 
     # create active learning loop
     loop = ActiveLoop(
         pool=train_data,
         strategy=strategy,
-        batch_size=config.trainer.batch_size,
+        batch_size=config.trainer.per_device_eval_batch_size * config.trainer._n_gpu,
         query_size=config.active.query_size,
-        init_strategy=strategy #if isinstance(strategy, strategies.Alps) else strategies.Random()
+        init_strategy=strategy if isinstance(strategy, strategies.Alps) else strategies.Random()
     )
     # create active learning engine
-    al_engine = ActiveLearningEngine(
+    al_engine = ActiveEngine(
         trainer=trainer,
-        trainer_run_kwargs=config.trainer.run_kwargs,
-        train_batch_size=config.trainer.batch_size,
-        eval_batch_size=config.trainer.batch_size,
-        val_ratio=config.active.val_ratio
+        train_val_split=config.active.train_val_split
     )
 
     @al_engine.on(Events.ITERATION_STARTED)
@@ -206,17 +186,13 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         i = engine.state.iteration
         print("-" * 8, "AL Step %i" % i, "-" * 8)
 
-    @al_engine.on(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
+    @al_engine.on(ActiveEvents.DATA_SAMPLING_COMPLETED)
     def save_selected_samples(engine):
         # check whether to save samples
         if not save_samples:
             return
         # create path to save samples in
-        path = os.path.join(
-            "output",
-            os.environ.get("WANDB_RUN_GROUP", "default"),
-            os.environ.get("WANDB_NAME", "default-run"),
-        )
+        path = os.path.join(config.trainer.output_dir, "samples")
         os.makedirs(path, exist_ok=True)
         # log
         print("Saving selected samples to `%s`" % path)
@@ -233,27 +209,13 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     @al_engine.on(Events.ITERATION_COMPLETED)
     def test_and_log(engine):
 
-        # create validation and test dataloaders
-        val_loader = DataLoader(engine.val_dataset, batch_size=config.trainer.batch_size, shuffle=False)
-        test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
-        # evaluate on val and test set
-        val_metrics = validator.run(val_loader).metrics
-        test_metrics = tester.run(test_loader).metrics
-        # don't log test confusion matrix
-        test_metrics = test_metrics.copy()
-        test_metrics.pop('cm')
-
-        # log metrics
+        # evaluate on validation and test set
+        val_metrics = trainer.evaluate(engine.val_dataset, metric_key_prefix="val")
+        test_metrics = trainer.evaluate(test_data, metric_key_prefix="test")
+        # print metrics
         print("Step:", engine.state.iteration, "-" * 15)
-        print("Training Converged:", trainer.converged)
-        if config.task is Task.SEQUENCE:
-            print("Train F-Score:", trainer.state.metrics['train/F'])
-            print("Val   F-Score:", val_metrics['val/F'])
-            print("Test  F-Score:", test_metrics['test/F'])
-        elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-            print("Train Entity F-Score:", trainer.state.metrics['train/entity/weighted avg/F'])
-            print("Val   Entity F-Score:", val_metrics['val/entity/weighted avg/F'])
-            print("Test  Entity F-Score:", test_metrics['test/entity/weighted avg/F'])
+        print("Val   Entity F-Score:", val_metrics['val_weighted-avg_F'])
+        print("Test  Entity F-Score:", test_metrics['test_weighted-avg_F'])
 
         # get total time spend in strategy
         strategy_time = loop.strategy.state.times[Events.COMPLETED.name]
@@ -282,7 +244,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         } if config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING) else {}
         # log all remaining metrics to weights and biases
         wandb.log(
-            data=(trainer.state.metrics | val_metrics | test_metrics | strategy_time | num_samples | num_tokens | num_annotations),
+            data=(engine.state.metrics | test_metrics | strategy_time | num_samples | num_tokens | num_annotations),
             step=engine.num_total_samples
         )
 
@@ -295,63 +257,6 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
             wandb.log({"Embedding": wandb.Image(fig)}, step=engine.num_total_samples)
             # close figure
             plt.close(fig)
-
-    # add work saved over sampling metric
-    wss = WorkSavedOverSampling(output_transform=lambda _: tester.state.metrics['cm'])
-    wss.attach(al_engine, "test/wss")
-
-    # add area under learning curve metrics 
-    if config.task is Task.SEQUENCE:
-        # area under f-score curve w.r.t. number of selected documents
-        area_wrt_docs = AreaUnderLearningCurve(
-            output_transform=lambda _: (
-                al_engine.num_total_samples,
-                tester.state.metrics['test/F']
-            )
-        )
-        area_wrt_docs.attach(al_engine, "test/Area(F|docs)")
-
-    elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-        # compute metrics on both token and entity level
-        for scope in ['token', 'entity/weighted avg']:
-            # area under f-score curve w.r.t. number of selected documents
-            area_wrt_docs = AreaUnderLearningCurve(
-                output_transform=lambda _: (
-                    al_engine.num_total_samples,
-                    tester.state.metrics['test/%s/F' % scope]
-                )
-            )
-            # area under f-score curve w.r.t. number of tokens
-            area_wrt_tokens = AreaUnderLearningCurve(
-                output_transform=lambda _: (
-                    (
-                        sum(item['attention_mask'].sum() for item in al_engine.train_dataset) + \
-                        sum(item['attention_mask'].sum() for item in al_engine.val_dataset)
-                    ),
-                    tester.state.metrics['test/%s/F' % scope]
-                )
-            )
-            # area under f-score curve w.r.t. number of annotations
-            area_wrt_annotations = AreaUnderLearningCurve(
-                output_transform=lambda _: (
-                    (
-                        # count the number of annotations (i.e. begin tags) in the
-                        # the current train and validation datasets
-                        sum(
-                            torch.isin(item['labels'], begin_tag_ids).sum()
-                            for item in al_engine.train_dataset
-                        ) + sum(
-                            torch.isin(item['labels'], begin_tag_ids).sum()
-                            for item in al_engine.val_dataset
-                        )
-                    ),
-                    tester.state.metrics['test/%s/F' % scope]
-                )
-            )
-            # attach all metrics to engine
-            area_wrt_docs.attach(al_engine, "test/%s/Area(F|docs)" % scope)
-            area_wrt_tokens.attach(al_engine, "test/%s/Area(F|tokens)" % scope)
-            area_wrt_annotations.attach(al_engine, "test/%s/Area(F|annotations)" % scope)
 
     # initialize wandb
     wandb_config = config.dict()

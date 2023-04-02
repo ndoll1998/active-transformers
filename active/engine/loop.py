@@ -1,7 +1,9 @@
+# import torch and data utils
 import torch
 from torch.utils.data import Dataset, Subset
-from .strategies.strategy import AbstractStrategy
-from .strategies.random import Random
+# import abstract strategy
+from .strategy import ActiveStrategy
+# import other utils
 from itertools import filterfalse
 from typing import Sequence
 from math import ceil
@@ -13,8 +15,8 @@ class ActiveLoop(object):
         pool:Dataset,
         batch_size:int,
         query_size:int,
-        strategy:AbstractStrategy,
-        init_strategy:AbstractStrategy =Random()
+        strategy:ActiveStrategy,
+        init_strategy:ActiveStrategy
     ) -> None:
         self.pool = Subset(
             dataset=pool,
@@ -38,8 +40,7 @@ class ActiveLoop(object):
         # return data
         return data
 
-    def apply_strategy(self, strategy:AbstractStrategy) -> Subset:
-        """ """
+    def apply_strategy(self, strategy:ActiveStrategy) -> Subset:
         # select samples using strategy
         indices = strategy.query(
             pool=self.pool,
@@ -50,7 +51,7 @@ class ActiveLoop(object):
 
     def init_step(self) -> Subset:
         return self.apply_strategy(self.init_strategy)
-    
+
     def step(self) -> Subset:
         return self.apply_strategy(self.strategy)
 

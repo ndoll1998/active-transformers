@@ -1,85 +1,33 @@
 import os
 import torch
 import numpy as np
-from torch.utils.data import DataLoader, random_split
-# import trainer, evaluator and metrics
-from active.helpers.trainer import Trainer
-from active.helpers.evaluator import Evaluator
-from active.helpers.metrics import (
-    SeqEvalMetrics,
-    NestedSeqEvalMetrics
-)
+from torch.utils.data import random_split
 # import data processors
-from active.helpers.processor import (
+from active.utils.data import NamedTensorDataset
+from active.scripts.utils.processor import (
     MinSequenceLengthFilter,
     BioTaggingProcessor,
     NestedBioTaggingProcessor,
     SequenceClassificationProcessor
 )
-from active.core.utils.data import NamedTensorDataset
-# import ignite
-from ignite.engine import Engine, Events
-from ignite.contrib.handlers.tqdm_logger import ProgressBar
-from ignite.metrics import Recall, Precision, Average, Fbeta, Accuracy
+# import metrics
+from active.scripts.utils.metrics import (
+    PRFS,
+    SeqEval,
+    NestedSeqEval
+)
+
+from active.scripts.utils.modeling import AutoModelForNestedTokenClassification
+from active.scripts.utils.trainer import CustomTrainer
 # hugginface
 import datasets
 import transformers
 # others
+import pydantic
+import dataclasses
 from enum import Enum
-from typing import Tuple, Dict, Union, Callable, Type
-from pydantic import BaseModel, validator, root_validator
-
-class ForwardForNestedTokenClassification(transformers.PreTrainedModel):
-    """ Forward container class used by transformer models for nested token classification.
-        Has to be combined with a transformer model for token classification.
-    """
-
-    def forward(self, *args, **kwargs):
-        """ Forward function for nested token classification.
-            Based on forward for standard token classification.
-
-            Output logits are of shape (B, S, E, 3) where B
-            is the batch size, S is the sequence length and
-            E is the number of classifiers/entities to predict.
-            The final dimension corresponds to BIO labeling scheme.
-        """
-        # expects dictionary output
-        kwargs['return_dict'] = True
-        # pop labels from arguments if given
-        # to avoid loss-computation in parent
-        labels = kwargs.pop('labels') if 'labels' in kwargs else None
-
-        # call forward transformer for token classification and reorganize logits
-        out = super(ForwardForNestedTokenClassification, self).forward(*args, **kwargs)
-        out['logits'] = out.logits.reshape(out.logits.size(0), out.logits.size(1), -1, 3)
-
-        # compute loss
-        if labels is not None:
-            out['loss'] = torch.nn.functional.cross_entropy(out.logits.reshape(-1, 3), labels.reshape(-1))
-
-        # return output
-        return out
-
-class AutoModelForNestedTokenClassification(object):
-
-    @staticmethod
-    def from_pretrained(pretrained_ckpt, **kwargs):
-        # re-interpret num labels as num entities
-        # for each entity introduce 3 labels (i.e. B,I,O)
-        kwargs['num_labels'] = 3 * kwargs.get('num_labels', 1)
-
-        # get requested model type        
-        config = transformers.AutoConfig.from_pretrained(pretrained_ckpt)
-        model_type = transformers.AutoModelForTokenClassification._model_mapping.get(type(config), None)
-        # create new model type overwriting the forward method
-        # for nested bio tagging predictions and loss computation
-        model_type_for_nested = type(
-            "TransformerForNestedTokenClassification",
-            (ForwardForNestedTokenClassification, model_type),
-            {}
-        )
-
-        return model_type_for_nested.from_pretrained(pretrained_ckpt, **kwargs)
+from datetime import datetime
+from typing import Tuple, List, Dict, Union, Callable, Type, Optional
 
 class Task(Enum):
     """ Enum defining supported task types:
@@ -112,7 +60,7 @@ class Task(Enum):
 
         raise ValueError("No data processor found for task <%s>" % self)
 
-class DataConfig(BaseModel):
+class DataConfig(pydantic.BaseModel):
     """ Data Configuration Model """
     task:Task =None
     # dataset config
@@ -126,7 +74,7 @@ class DataConfig(BaseModel):
     min_sequence_length:int
     max_sequence_length:int
 
-    @root_validator()
+    @pydantic.root_validator()
     def _check_config(cls, values):
         # get values
         task = values.get('task')
@@ -248,52 +196,13 @@ class DataConfig(BaseModel):
         # return preprocessed datasets
         return ds
 
-    def attach_metrics(self, engine:Engine, tag:str) -> None:
-        # create token-level metrics
-        L = Average(output_transform=lambda out: out['loss'])
-        A = Accuracy(output_transform=type(engine).get_logits_and_labels)
-        R = Recall(output_transform=type(engine).get_logits_and_labels, average=True)
-        P = Precision(output_transform=type(engine).get_logits_and_labels, average=True)
-        F = Fbeta(beta=1.0, output_transform=type(engine).get_logits_and_labels, average=True)
-
-        if self.task is Task.SEQUENCE:
-            # attach metrics
-            L.attach(engine, '%s/L' % tag)
-            A.attach(engine, '%s/A' % tag)
-            R.attach(engine, '%s/R' % tag)
-            P.attach(engine, '%s/P' % tag)
-            F.attach(engine, '%s/F' % tag)
-
-        elif self.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-            # attach token-level metrics
-            L.attach(engine, '%s/token/L' % tag)
-            A.attach(engine, '%s/token/A' % tag)
-            R.attach(engine, '%s/token/R' % tag)
-            P.attach(engine, '%s/token/P' % tag)
-            F.attach(engine, '%s/token/F' % tag)
-
-            # create and attach sequence level metric
-            if self.task is Task.BIO_TAGGING:
-                SeqEvalMetrics(
-                    label_space=self.label_space,
-                    output_transform=type(engine).get_logits_labels_mask
-                ).attach(engine, '%s/entity' % tag)
-
-            elif self.task is Task.NESTED_BIO_TAGGING:
-                NestedSeqEvalMetrics(
-                    # note that here the label space is the entity types
-                    entity_types=self.label_space,
-                    output_transform=type(engine).get_logits_labels_mask
-                ).attach(engine, '%s/entity' % tag)
-
-
-class ModelConfig(BaseModel):
+class ModelConfig(pydantic.BaseModel):
     """ Model Configuration Model """
     task:Task = None
     # pretrained model checkpoint
     pretrained_ckpt:str
 
-    @validator('pretrained_ckpt')
+    @pydantic.validator('pretrained_ckpt')
     def _check_pretrained_ckpt(cls, value):
         try:
             # check if model is valid by loading config
@@ -314,39 +223,64 @@ class ModelConfig(BaseModel):
             num_labels=len(label_space)
         )
 
-class TrainerConfig(BaseModel):
-    """ Trainer Configuration Model """
-    incremental:bool
-    # optimizer setup
-    lr:float
-    weight_decay:float
-    # training setup
-    batch_size:int
-    max_epochs:Union[int, None]
-    epoch_length:Union[int, None]
-    min_epoch_length:Union[int, None]
-    # convergence criteria
-    early_stopping_patience:int
-    accuracy_threshold:float
+@pydantic.dataclasses.dataclass
+@dataclasses.dataclass
+class TrainerConfig(transformers.TrainingArguments):
+    """ Trainer Configuration """
+    # passed from experiment config and needed for output directory
+    name:str =None
+    # create default for output directory
+    run_name:str ="{name}-{timestamp}"
+    output_dir:str ="output/{name}-{timestamp}"
+    overwrite_output_dir:bool =True
+    # early stopping setup
+    early_stopping_patience:Optional[int] =1
+    early_stopping_threshold:Optional[float] =0.0
+    # 
+    load_best_model_at_end:bool =True
+    metric_for_best_model:str ='eval_loss'
+    greater_is_better:bool =False
+    # minimum steps between evaluations
+    # overwrites epoch-based evaluation behavior
+    min_epoch_length:Optional[int] =15
+    # overwrite some default values
+    do_train:bool =True
+    do_eval:bool =True
+    evaluation_strategy:transformers.trainer_utils.IntervalStrategy ="epoch"
+    save_strategy:transformers.trainer_utils.IntervalStrategy ="epoch"
+    eval_accumulation_steps:Optional[int] =1
+    save_total_limit:Optional[int] =3
+    label_names:List[str] =dataclasses.field(default_factory=lambda: ['labels'])
+    report_to:Optional[List[str]] =dataclasses.field(default_factory=list)
+    log_level:Optional[str] ='warning'
+    # fields with incomplete types in Training Arguments
+    # set type to avoid error in pydantic validation
+    debug:Union[str, List[transformers.debug_utils.DebugOption]]              =""
+    sharded_ddp:Union[str, List[transformers.trainer_utils.ShardedDDPOption]] =""
+    fsdp:Union[str, List[transformers.trainer_utils.FSDPOption]]              =""
+    fsdp_config:Union[None, str, dict]                                        =None
 
-    def build_trainer(self, model:transformers.PreTrainedModel):
-        # create optimizer
-        optim=torch.optim.AdamW(model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-        # create trainer
-        return Trainer(
-            model=model,
-            optim=optim,
-            scheduler=None,
-            acc_threshold=self.accuracy_threshold,
-            patience=self.early_stopping_patience,
-            incremental=self.incremental
-        )
+    @pydantic.root_validator()
+    def _format_output_directory(cls, values):
+        # get timestamp
+        timestamp=datetime.now().isoformat()
+        # format all values depending on output directory
+        return values | {
+            'output_dir': values.get('output_dir').format(
+                name=values.get('name'),
+                timestamp=datetime.now().isoformat()
+            ),
+            'logging_dir': values.get('logging_dir').format(
+                name=values.get('name'),
+                timestamp=datetime.now().isoformat()
+            ),
+            'run_name': values.get('run_name').format(
+                name=values.get('name'),
+                timestamp=datetime.now().isoformat()
+            ),
+        }
 
-    @property
-    def run_kwargs(self) -> Dict[str, int]:
-        return self.dict(include={'max_epochs', 'epoch_length', 'min_epoch_length'})
-
-class ExperimentConfig(BaseModel):
+class ExperimentConfig(pydantic.BaseModel):
     """ Experiment Configuration Model
         Includes all of the above configurations as sub-models
     """
@@ -359,13 +293,21 @@ class ExperimentConfig(BaseModel):
     model:ModelConfig
     trainer:TrainerConfig
 
-    @validator('data', 'model', pre=True)
+    @pydantic.validator('data', 'model', pre=True)
     def _pass_task_to_sub_configs(cls, v, values):
         assert 'task' in values
-        if isinstance(v, BaseModel):
+        if isinstance(v, pydantic.BaseModel):
             return v.copy(update={'task': values.get('task')})
         elif isinstance(v, dict):
             return v | {'task': values.get('task')}
+
+    @pydantic.validator('trainer', pre=True)
+    def _pass_name_to_trainer_config(cls, v, values):
+        assert 'name' in values
+        if isinstance(v, pydantic.BaseModel):
+            return v.copy(update={'name': values.get('name')})
+        elif isinstance(v, dict):
+            return v | {'name': values.get('name')}
 
     def load_dataset(self, **kwargs) -> Dict[str, datasets.arrow_dataset.Dataset]:
         return self.data.load_dataset(self.model.tokenizer, **kwargs)
@@ -373,14 +315,47 @@ class ExperimentConfig(BaseModel):
     def load_model(self) -> transformers.PreTrainedModel:
         return self.model.load_model(self.data.label_space)
 
-    def build_trainer(self) -> Trainer:
-        return self.trainer.build_trainer(self.load_model())
+    def build_trainer(self) -> transformers.Trainer:
 
+        # create the metric class for the task
+        if self.task is Task.SEQUENCE:
+            metrics = PRFS(label_space=self.data.label_space)
+        elif self.task is Task.BIO_TAGGING:
+            metrics = SeqEval(label_space=self.data.label_space)
+        elif self.task is Task.NESTED_BIO_TAGGING:
+            metrics = NestedSeqEval(entity_types=self.data.label_space)
+
+        # create trainer instance
+        #return transformers.Trainer(
+        return CustomTrainer(
+            model=self.load_model(),
+            args=self.trainer,
+            # datasets are set manually later on
+            train_dataset=None,
+            eval_dataset=None,
+            # add early stopping callback
+            callbacks=[
+                transformers.EarlyStoppingCallback(
+                    early_stopping_patience=self.trainer.early_stopping_patience,
+                    early_stopping_threshold=self.trainer.early_stopping_threshold
+                )
+            ],
+            # get predicted labels from logits as expected by metrics
+            preprocess_logits_for_metrics=lambda logits, _: logits.argmax(dim=-1),
+            compute_metrics=metrics
+        )
 
 def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
-    import wandb
 
+    # parse config
     config = ExperimentConfig.parse_file(config)
+    # overwrite a few values
+    config.trainer.seed = seed
+    config.trainer.data_seed = seed
+    config.trainer.disable_tqdm |= disable_tqdm
+    # report to weights and biases
+    config.trainer.report_to = ["wandb"]
+    # print configuration
     print("Config:", config.json(indent=2))
 
     # set random seed
@@ -389,16 +364,13 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
 
     # load datasets and build trainer
     ds = config.load_dataset(use_cache=use_cache)
-    trainer = config.build_trainer()
-
     # split validation dataset from train set
     train_data, test_data = ds['train'], ds['test']
     train_data, val_data = random_split(train_data, [
         int(0.8 * len(train_data)),
         len(train_data) - int(0.8 * len(train_data))
     ])
-
-    # convert all datasets to tensordatasets
+    # convert all datasets to tensor datasets
     train_data = NamedTensorDataset.from_dataset(train_data)
     val_data = NamedTensorDataset.from_dataset(val_data)
     test_data = NamedTensorDataset.from_dataset(test_data)
@@ -407,65 +379,21 @@ def train(config:str, seed:int, use_cache:bool, disable_tqdm:bool =False):
     n_tokens = sum((item['attention_mask'].sum().item() for item in train_data))
     print("#Train Tokens:", n_tokens)
 
-    n_annotations = sum((item['labels'] == 1).sum() for item in train_data)
-    print('#Annotations:', n_annotations)
+    # create trainer and set datasets
+    trainer = config.build_trainer()
+    trainer.train_dataset = train_data
+    trainer.eval_dataset = val_data
 
-    exit()
+    # start training
+    trainer.train()
 
-    # create dataloaders
-    val_loader = DataLoader(val_data, batch_size=config.trainer.batch_size, shuffle=False)
-    test_loader = DataLoader(test_data, batch_size=config.trainer.batch_size, shuffle=False)
-    train_loader = DataLoader(train_data, batch_size=config.trainer.batch_size, shuffle=True)
-
-    # set up wandb 
-    wandb_config = config.dict(exclude={"active"})
-    wandb_config['data']['dataset'] = ds['train'].info.builder_name
-    wandb_config['seed'] = seed
-    wandb.init(
-        config=wandb_config,
-        project=os.environ.get("WANDB_PROJECT", "train-final"),
-        group=config.name
-    )
-
-    # set valition dataset in trainer
-    trainer.val_loader = val_loader
-    # create tester engine
-    validator = Evaluator(trainer.unwrapped_model)
-    tester = Evaluator(trainer.unwrapped_model)
-    # attach metrics
-    config.data.attach_metrics(trainer, tag="train")
-    config.data.attach_metrics(validator, tag="val")
-    config.data.attach_metrics(tester, tag="test")
-    # attach progress bar
-    if not disable_tqdm:
-        ProgressBar(ascii=True).attach(trainer, output_transform=lambda output: {'L': output['loss']})
-        ProgressBar(ascii=True, desc='Validating').attach(validator)
-        ProgressBar(ascii=True, desc='Testing').attach(tester)
-
-    # add event handler for testing and logging
-    @trainer.on(Events.EPOCH_COMPLETED)
-    def test_and_log(engine):
-        # evaluate on val and test set
-        val_state = validator.run(val_loader)
-        test_state = tester.run(test_loader)
-        # log both train and test metrics
-        print("Step:", engine.state.iteration, "-" * 15)
-        if config.task is Task.SEQUENCE:
-            print("Train F-Score:", engine.state.metrics['train/F'])
-            print("Val   F-Score:", val_state.metrics['val/F'])
-            print("Test  F-Score:", test_state.metrics['test/F'])
-        elif config.task in (Task.BIO_TAGGING, Task.NESTED_BIO_TAGGING):
-            print("Train Entity F-Score:", engine.state.metrics['train/entity/weighted avg/F'])
-            print("Val   Entity F-Score:", val_state.metrics['val/entity/weighted avg/F'])
-            print("Test  Entity F-Score:", test_state.metrics['test/entity/weighted avg/F'])
-        # log all metrics to weights and biases 
-        wandb.log(
-            test_state.metrics | val_state.metrics | engine.state.metrics,
-            step=engine.state.iteration
-        )
-
-    # run training
-    return trainer.run(train_loader, **config.trainer.run_kwargs)
+    # test trained model
+    # trainer loads best model at end
+    metrics = trainer.evaluate(test_data, metric_key_prefix="test")
+    print("-" * 15 + "Final Test Scores" + "-" * 15)
+    print("Test Micro F1:    %.4f" % metrics['test_micro-avg_F'])
+    print("Test Macro F1:    %.4f" % metrics['test_macro-avg_F'])
+    print("Test Weighted F1: %.4f" % metrics['test_weighted-avg_F'])
 
 def main():
     from argparse import ArgumentParser

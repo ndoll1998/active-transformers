@@ -1,7 +1,7 @@
 import gym
 import torch
 import transformers
-
+# import base class
 from .extractor import FeatureExtractor
 
 class TransformerFeatureExtractor(FeatureExtractor):

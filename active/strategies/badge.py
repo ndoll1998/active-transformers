@@ -7,13 +7,13 @@ import ignite.distributed as idist
 from transformers import PreTrainedModel
 from sklearn.cluster._kmeans import kmeans_plusplus
 # import base and utils
-from .strategy import AbstractStrategy
-from ..utils.data import move_to_device
+from active.engine.strategy import ActiveStrategy
+from active.utils.data import move_to_device
 # import others
 import warnings
 from typing import Sequence, Tuple, Any
 
-class Badge(AbstractStrategy):
+class Badge(ActiveStrategy):
     """ Implementation of `Deep Batch Active Learning By Diverse,
         Uncertain Gradient Lower Bounds` (Ash et al., 2019) for
         transformer models.

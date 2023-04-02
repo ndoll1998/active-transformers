@@ -1,9 +1,12 @@
+# import torch and data utils
 import torch
 from torch.utils.data import Dataset
-from .strategy import AbstractStrategy
+# import base class
+from active.engine.strategy import ActiveStrategy
+# other utils
 from typing import Sequence
 
-class Random(AbstractStrategy):
+class Random(ActiveStrategy):
 
     def process(self, batch):
         pass

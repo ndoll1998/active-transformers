@@ -14,11 +14,11 @@ from transformers import (
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 # import base class and more
-from .strategy import AbstractStrategy
-from ..utils.data import move_to_device
+from active.engine.strategy import ActiveStrategy
+from active.utils.data import move_to_device
 from typing import Sequence, Any, Optional
 
-class Alps(AbstractStrategy):
+class Alps(ActiveStrategy):
     """ Implementation of ALPS presented in `Cold-Start Active Learning through
         Self-supervised Language Modeling` (Yuan et al., 2020).
 

@@ -6,17 +6,19 @@ from ignite.engine import Events
 from ignite.metrics import Metric
 import ignite.distributed as idist
 # import active learning components
-from active.core.loop import ActiveLoop
-from active.core.strategies import AbstractStrategy, Random
-from active.helpers.engine import ActiveLearningEngine
-from active.helpers.evaluator import Evaluator
+from active.engine import (
+    ActiveLoop,
+    ActiveEngine,
+    ActiveEvents,
+    ActiveStrategy
+)
 # import data utilities
-from active.core.utils.data import (
+from active.utils.data import (
     NamedTensorDataset,
     default_collate_drop_labels
 )
 from torch.utils.data import (
-    Subset, 
+    Subset,
     Dataset,
     DataLoader,
     default_collate
@@ -35,7 +37,7 @@ class State:
             budget (int): total annotation budget
             query_size (int): number of queries to sample before retraining the model
 
-            prev_metric (float): 
+            prev_metric (float):
                 value the reward metric evaluated to in the previous active learning step.
     """
     budget:int
@@ -49,21 +51,21 @@ class State:
     obs:dict =None
 
     # model and observation queues
-    model_queue:List[dict] = field(default_factory=list)    
+    model_queue:List[dict] = field(default_factory=list)
     obs_queue:List[dict] =field(default_factory=list)
 
     # selected samples for current active learning step
     # and a counter to keep track of the total number of
     # samples selected
     samples:List[int] =field(default_factory=list)
-    total_samples:int =0    
+    total_samples:int =0
 
     # reward metric value evaluated at the previous AL step
     prev_metric:float =0
 
     def reset(self) -> None:
         self.__init__(
-            budget=self.budget, 
+            budget=self.budget,
             query_size=self.query_size
         )
 
@@ -117,20 +119,19 @@ class StreamBasedEnv(gym.Env):
         budget:int,
         query_size:int,
         # active learning engine
-        engine:ActiveLearningEngine,
+        engine:ActiveEngine,
         # metric used to compute reward
         metric:Metric,
         # query selection strategy
-        query_strategy:AbstractStrategy,
+        query_strategy:ActiveStrategy,
         # data
         policy_pool_data:Dataset,
         model_pool_data:Dataset,
         model_test_data:Dataset,
-        # data setup, inferred from data
-        # and model when not specified
-        policy_sequence_length:Optional[int] =None,
-        model_sequence_length:Optional[int] =None,
-        max_num_labels:Optional[int] =None
+        # values needed to specify observation state
+        policy_sequence_length:int,
+        model_sequence_length:int,
+        max_num_labels:int
     ) -> None:
         # initialize environment
         super(StreamBasedEnv, self).__init__()
@@ -158,21 +159,9 @@ class StreamBasedEnv(gym.Env):
         self.model_test_data = model_test_data
 
         # specify data layout, i.e. the dimensions of the observation space
-        self._policy_seq_len = policy_sequence_length or len(self.policy_pool_data[0]['input_ids'])
-        self._model_max_seq_len = model_sequence_length or self._model_seq_length
-        self._model_max_num_labels = max_num_labels or self._model_num_labels
-
-    @cached_property
-    def _model_seq_length(self) -> int:
-        return len(self.model_pool_data[0]['input_ids'])
-
-    @cached_property
-    def _model_num_labels(self) -> int:
-        """ Actual number of labels of prediction model.
-            Note that this may differ from the number of labels
-            in the observation space to support different datasets
-        """
-        return self.engine.trainer.unwrapped_model.config.num_labels
+        self._policy_seq_len = policy_sequence_length
+        self._model_max_seq_len = model_sequence_length
+        self._model_max_num_labels = max_num_labels
 
     @property
     def _vocab_size(self) -> int:
@@ -180,11 +169,11 @@ class StreamBasedEnv(gym.Env):
         # vocab size is the maximum number that can be represented by int64
         # use int64 since it matches the torch.long datatype
         return np.iinfo(np.int64).max
-        
+
     @property
     def _test_data_loader(self) -> DataLoader:
         return DataLoader(
-            self.model_test_data, 
+            self.model_test_data,
             batch_size=self.engine.eval_batch_size,
             shuffle=False
         )
@@ -196,14 +185,12 @@ class StreamBasedEnv(gym.Env):
     @property
     def observation_space(self) -> gym.spaces.Dict:
         # build observation space
-        # TODO: support variable number of labels to apply to same model to different datasets
-        #       by introducing a logits mask or something similar
         return gym.spaces.Dict({
             # policy transformer inputs
             "input_ids": gym.spaces.Box(
-                low=0, 
-                high=self._vocab_size, 
-                shape=(self._policy_seq_len,), 
+                low=0,
+                high=self._vocab_size,
+                shape=(self._policy_seq_len,),
                 dtype=np.int64
             ),
             "attention_mask": gym.spaces.Box(
@@ -214,8 +201,8 @@ class StreamBasedEnv(gym.Env):
             ),
             # model predictions
             "logits": gym.spaces.Box(
-                low=-np.inf, 
-                high=np.inf, 
+                low=-np.inf,
+                high=np.inf,
                 shape=(self._model_max_seq_len, self._model_max_num_labels),
                 dtype=np.float32
             ),
@@ -231,7 +218,7 @@ class StreamBasedEnv(gym.Env):
     def _refill_queues(self) -> bool:
         # make sure queues are empty
         assert self.state.are_queues_empty, "Trying to refill non-empty queues!"
-        
+
         # check if data pool is exhausted
         if len(self.loop.pool) == 0:
             return False
@@ -244,7 +231,7 @@ class StreamBasedEnv(gym.Env):
 
         # build policy queue corresponding to model queue    
         policy_queue = Subset(
-            dataset=self.policy_pool_data, 
+            dataset=self.policy_pool_data,
             indices=model_queue.indices
         )
 
@@ -276,7 +263,7 @@ class StreamBasedEnv(gym.Env):
                 'logits_mask': logits_mask.numpy()
             } for i, policy_item in enumerate(policy_queue)
         ]
-        
+
         return True
 
     def reset(self):
@@ -288,7 +275,7 @@ class StreamBasedEnv(gym.Env):
         # call engine started event, this resets the
         # internals of the engine, i.e. it re-initializes
         # the model and resets the optimizer, scheduler
-        self.engine._fire_event(Events.STARTED)      
+        self.engine._fire_event(Events.STARTED)
         self.engine._fire_event(Events.EPOCH_STARTED)
         # for now the state has to be reset manually
         # TODO: there has to be a way of doing this in event handler
@@ -323,11 +310,11 @@ class StreamBasedEnv(gym.Env):
         return self.state.next_query()
 
     def step(self, action):
-        
+
         if bool(action):
             # select current query
             self.state.select_query()
-        
+
         # info dictionary
         info = {}
         # get next observations and check
@@ -347,7 +334,7 @@ class StreamBasedEnv(gym.Env):
             self.engine.state.iteration += 1
             # also call the iteration started event
             self.engine._fire_event(Events.ITERATION_STARTED)
-            
+
             # create dataset from aquired data
             samples = default_collate(self.state.samples)
             samples = NamedTensorDataset(**samples)
@@ -363,7 +350,7 @@ class StreamBasedEnv(gym.Env):
             # compute reward and update state
             reward = metric_val - self.state.prev_metric
             self.state.prev_metric = metric_val
-            
+
             # call iteration completed event
             # note that at this point the evaluator has ran
             # and metrics depending on the evaluator can be computed
@@ -372,7 +359,7 @@ class StreamBasedEnv(gym.Env):
         else:
             # delayed reward
             reward = 0
-        
+
         if done:
             # call engine completed event
             self.engine._fire_event(Events.EPOCH_COMPLETED)

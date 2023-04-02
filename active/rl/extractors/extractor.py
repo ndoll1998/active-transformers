@@ -1,9 +1,9 @@
 import gym
-from torch.nn import Module
+import torch.nn as nn
 from abc import ABC, abstractmethod
 from ray.rllib.utils.typing import ModelConfigDict
 
-class FeatureExtractor(ABC, Module):
+class FeatureExtractor(ABC, nn.Module):
     """ Abstract Base Feature Extractor used by Models """
 
     def __init__(

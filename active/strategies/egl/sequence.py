@@ -43,7 +43,7 @@ class Node:
 
     @property
     def children(self):
-        
+
         idx = set(tuple(range(len(self.seq))))
         for i in (idx - self._swapped_idx):
             for j in range(self.probs.size(1)):
@@ -70,7 +70,7 @@ def topk_sequences(probs, k):
                 Shape must be (S, C) where S is the sequence length and C is
                 the number of classes.
             k (int): number of sequences to generate. k is upper bounded by C^S.
-        
+
         Returns:
             probs (torch.FloatTensor): posterior probabilities of the generated sequences.
             args (torch.LongTensor):
@@ -88,13 +88,13 @@ def topk_sequences(probs, k):
     # list of all leave nodes
     leaves = [root]
     nodes = []
-    
+
     # only do k-1 to avoid building children in last iteration
     for _ in range(k - 1):
         # get leave with maximum posterior
         heapq.heapify(leaves)
         node = heapq.heappop(leaves)
-       
+
         # 
         nodes.append(node)
         # add new leaves and uniquify

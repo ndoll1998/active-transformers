@@ -1,15 +1,16 @@
 import torch
 from torch.utils.data import Dataset, ConcatDataset, DataLoader, random_split
+# import transformers
+import transformers
 # import ignite
 from ignite.engine import Engine
 from ignite.engine.events import State, Events, EventEnum
 # others
-from active.core.loop import ActiveLoop
-from .trainer import Trainer
+from .loop import ActiveLoop
 from typing import Optional
 
-class ActiveLearningEvents(EventEnum):
-    """ Costum Events fired by Active Learning Engine.
+class ActiveEvents(EventEnum):
+    """ Costum Events fired by `ActiveEngine`.
 
         This list of events also contains some convergence
         management events. I.e. a model might be trained
@@ -23,7 +24,7 @@ class ActiveLearningEvents(EventEnum):
     """
     DATA_SAMPLING_COMPLETED = "data-sampling-completed"
 
-class ActiveLearningEngine(Engine):
+class ActiveEngine(Engine):
     """ Active Learning Engine implementing the basic active
         learning procedure of iterating the following steps:
             1. gathering the next samples from the active loop
@@ -32,43 +33,25 @@ class ActiveLearningEngine(Engine):
             3. running trainer on the full dataset sampled up to this point
 
         Args:
-            trainer (Trainer): model trainer
-            trainer_run_kwargs (Optional[dict]):
-                keyword arguments passed to the trainers run method.
-                Sets values like `max_epochs` and `epoch_length`.
-            train_batch_size (Optional[int]):
-                batch size used for model training.
-                Defaults to 32.
-            eval_batch_size (Optional[int]):
-                batch size used for model evaluation.
-                Defaults to `train_batch_size`.
-            val_ratio (Optional[float]):
-                validation data split ratio. Defaults to 0.9 meaning 90% of
+            trainer (transformers.Trainer):
+                trainer called in each active learning iteration.
+            train_val_split (Optional[float]):
+                train-validation data split ratio. Defaults to 0.9 meaning 90% of
                 the sampled data is used for model training and the remaining
                 10% is used as validation data.
     """
 
-    def __init__(
-        self,
-        trainer:Trainer,
-        trainer_run_kwargs:Optional[dict] ={},
-        train_batch_size:Optional[int] =32,
-        eval_batch_size:Optional[int] =None,
-        val_ratio:Optional[float] =0.9
+    def __init__(self,
+        trainer:transformers.Trainer,
+        train_val_split:Optional[float] =0.9
     ) -> None:
         # initialize engine
-        super(ActiveLearningEngine, self).__init__(type(self).step)
-
+        super(ActiveEngine, self).__init__(type(self).step)
         # register costum events
-        self.register_events(*ActiveLearningEvents)
+        self.register_events(*ActiveEvents)
 
-        # save trainer and other arguments
         self.trainer = trainer
-        self.train_batch_size = train_batch_size
-        self.eval_batch_size = eval_batch_size or self.train_batch_size
-        self.trainer_run_kwargs = trainer_run_kwargs
-        self.val_ratio = val_ratio
-
+        self.train_val_split = train_val_split
         # active datasets
         self.train_data = []
         self.val_data = []
@@ -103,25 +86,11 @@ class ActiveLearningEngine(Engine):
         else:
             return self.train_dataset
 
-    def dataloader(self, data:Dataset, **kwargs) -> DataLoader:
-        """ Create the dataloader for a given dataset with some specific configuration.
-
-            Args:
-                data (Dataset): dataset to use
-                **kwargs (Any): keyword arguments passed to the dataloader
-
-            Returns:
-                loader (DataLoader): dataloader from given dataset and configuration
-        """
-        return DataLoader(data, **kwargs)
-
     def _reset(self):
-        """ Event handler to reset the engine, i.e. re-initialize the model,
-            reset optimizer and scheduler states and clear the sampled datasets.
-            Called on `STARTED`.
+        """ Event handler to reset the engine, i.e. clear train and
+            validation datasets. Called on `STARTED`.
         """
-        # re-initialize model and reset optimizer and scheduler states
-        self.trainer._load_init_ckpt(force=True)
+        # TODO: reset trainer state including model and optimizer
         # clear datasets
         self.train_data.clear()
         self.val_data.clear()
@@ -142,7 +111,7 @@ class ActiveLearningEngine(Engine):
         # make sure samples are valid
         assert len(samples) > 0, "No samples provided!"
         # compute data split sizes satifying the train-validation ratio as closely as possible
-        n_train = round((self.num_total_samples + len(samples)) * self.val_ratio) - self.num_train_samples
+        n_train = round((self.num_total_samples + len(samples)) * self.train_val_split) - self.num_train_samples
         n_val = len(samples) - n_train
         # split into train and validation samples
         train_samples, val_samples = random_split(samples, [n_train, n_val])
@@ -152,13 +121,13 @@ class ActiveLearningEngine(Engine):
         self.val_data.append(val_samples)
 
         # fire data generated event
-        self.fire_event(ActiveLearningEvents.DATA_SAMPLING_COMPLETED)
+        self.fire_event(ActiveEvents.DATA_SAMPLING_COMPLETED)
 
-        # create dataloaders and update validation loader in trainer
-        train_loader = self.dataloader(self.train_dataset, batch_size=self.train_batch_size, shuffle=True)
-        self.trainer.val_loader = self.dataloader(self.val_dataset, batch_size=self.eval_batch_size, shuffle=False)
-        # run training
-        self.trainer.run(train_loader, **self.trainer_run_kwargs)
+        # update train and validation datasets in trainer
+        self.trainer.train_dataset = self.train_dataset
+        self.trainer.eval_dataset = self.val_dataset
+        # run trainer and save output in engine state
+        return self.trainer.train()
 
     def run(
         self,
@@ -169,7 +138,7 @@ class ActiveLearningEngine(Engine):
         # fully reset state
         self._reset_state()
         # run
-        return super(ActiveLearningEngine, self).run(
+        return super(ActiveEngine, self).run(
             data=loop,
             max_epochs=1,
             epoch_length=steps,

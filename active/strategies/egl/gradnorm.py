@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch._utils import _get_device_index
-from active.core.utils.data import move_to_device
+from active.utils.data import move_to_device
 from collections import defaultdict
 from typing import Tuple, List, Dict, Any
 
