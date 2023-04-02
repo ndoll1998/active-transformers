@@ -236,7 +236,10 @@ class TrainerConfig(transformers.TrainingArguments):
     # early stopping setup
     early_stopping_patience:Optional[int] =1
     early_stopping_threshold:Optional[float] =0.0
-    # 
+    # incremental training setup, i.e. continue training of
+    # model in each AL iteration instead of resetting
+    incremental:bool =True
+    # checkpointing
     load_best_model_at_end:bool =True
     metric_for_best_model:str ='eval_loss'
     greater_is_better:bool =False
@@ -325,10 +328,16 @@ class ExperimentConfig(pydantic.BaseModel):
         elif self.task is Task.NESTED_BIO_TAGGING:
             metrics = NestedSeqEval(entity_types=self.data.label_space)
 
+        # either set model directly, this way the model is
+        # not reset at each AL iteration or use the `model_init`
+        # functionality to reset the model at each iteration
+        model_kwarg = {'model': self.load_model()} \
+            if self.trainer.incremental else {'model_init': self.load_model}
+        model_init_kwarg = {'model_init': self.load_model}
+
         # create trainer instance
-        #return transformers.Trainer(
         return CustomTrainer(
-            model=self.load_model(),
+            **model_kwarg,
             args=self.trainer,
             # datasets are set manually later on
             train_dataset=None,

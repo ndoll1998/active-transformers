@@ -24,7 +24,7 @@ from math import ceil
 from matplotlib import pyplot as plt
 from pydantic import BaseModel, validator
 # base config and helper function
-from active.scripts.run_train_v2 import Task, ExperimentConfig
+from active.scripts.run_train import Task, ExperimentConfig
 
 def visualize_strategy_output(strategy):
     # get selected indices and processing output of unlabeled pool
@@ -179,6 +179,7 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
         trainer=trainer,
         train_val_split=config.active.train_val_split
     )
+
 
     @al_engine.on(Events.ITERATION_STARTED)
     def on_started(engine):

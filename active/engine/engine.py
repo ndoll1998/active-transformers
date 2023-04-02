@@ -1,3 +1,4 @@
+import os
 import torch
 from torch.utils.data import Dataset, ConcatDataset, DataLoader, random_split
 # import transformers
@@ -8,6 +9,7 @@ from ignite.engine.events import State, Events, EventEnum
 # others
 from .loop import ActiveLoop
 from typing import Optional
+from tempfile import NamedTemporaryFile
 
 class ActiveEvents(EventEnum):
     """ Costum Events fired by `ActiveEngine`.
@@ -56,8 +58,17 @@ class ActiveEngine(Engine):
         self.train_data = []
         self.val_data = []
 
+        # save initial model state to reload on reset
+        with NamedTemporaryFile(delete=False) as tmpfile:
+            self.init_model_state = tmpfile.name
+            torch.save(self.trainer.model.state_dict(), self.init_model_state)
+
         # reset engine state and datasets on start
         self.add_event_handler(Events.STARTED, type(self)._reset)
+
+    def __del__(self):
+        # delete initial model state in temporary file
+        os.unlink(self.init_model_state)
 
     @property
     def num_train_samples(self) -> int:
@@ -86,11 +97,28 @@ class ActiveEngine(Engine):
         else:
             return self.train_dataset
 
+    def _reinit_model(self):
+        """ Calls the `model_init` function passed to the trainer
+            at initialization. Used to reset the model at reset.
+        """
+        if self.trainer.model_init is not None:
+            # re-initialize trainer model
+            self.trainer.model = self.trainer.call_model_init()
+        else:
+            # load initial checkpoint
+            init_state_dict = torch.load(self.init_model_state)
+            self.trainer.model.load_state_dict(init_state_dict)
+        # reset optimizer and scheduler
+        self.trainer.optimizer = None
+        self.trainer.lr_scheduler = None
+
     def _reset(self):
         """ Event handler to reset the engine, i.e. clear train and
-            validation datasets. Called on `STARTED`.
+            validation datasets. Also resets the trainer.
+            Called on `STARTED`.
         """
-        # TODO: reset trainer state including model and optimizer
+        # re-initialize model
+        self._reinit_model()
         # clear datasets
         self.train_data.clear()
         self.val_data.clear()
