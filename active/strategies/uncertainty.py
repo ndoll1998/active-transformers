@@ -4,7 +4,7 @@ import ignite.distributed as idist
 
 from transformers import PreTrainedModel
 from active.utils.data import move_to_device
-from .score import ScoreBasedStrategy
+from .utils.score import ScoreBasedStrategy
 
 from abc import abstractmethod
 from typing import Sequence, Any, Optional

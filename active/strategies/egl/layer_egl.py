@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import ignite.distributed as idist
 # base strategy and utils
-from ..score import ScoreBasedStrategy
 from active.engine.strategy import ActiveStrategy
 from active.utils.data import move_to_device
 from .gradnorm import GoodfellowGradientNorm

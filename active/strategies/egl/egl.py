@@ -6,7 +6,7 @@ import ignite.distributed as idist
 from active.utils.data import move_to_device
 from .gradnorm import GoodfellowGradientNorm
 from .sequence import topk_sequences
-from ..score import ScoreBasedStrategy
+from ..utils.score import ScoreBasedStrategy
 # import transformers and others
 from transformers import PreTrainedModel
 from abc import abstractmethod
