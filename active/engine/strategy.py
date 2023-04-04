@@ -87,8 +87,8 @@ class ActiveStrategy(Engine, ABC):
             to run a strategy for more than one epoch). Calls the `sample` function
             and stores the output in the `_indices` attribute of the strategy.
 
-            This way tracked time stored in `state.times[`COMPLETED`]` incorporates
-            the processing and sampling.
+            This way tracked time stored in `state.times[`COMPLETED`]` includes
+            processing and sampling.
 
             Only called when engine is run by calling `query` function. Not called
             when engine is directly executed by `run` function.

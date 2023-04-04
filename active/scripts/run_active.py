@@ -169,10 +169,10 @@ def active(config:str, seed:int, strategy:str, budget:int, query_size:int, use_c
     # create active learning loop
     loop = ActiveLoop(
         pool=train_data,
-        strategy=strategy,
         batch_size=config.trainer.per_device_eval_batch_size * config.trainer._n_gpu,
         query_size=config.active.query_size,
-        init_strategy=strategy if isinstance(strategy, strategies.Alps) else strategies.Random()
+        strategy=[strategies.Random() if not isinstance(strategy, strategies.Alps) else strategy] + \
+            [strategy] * max(0, ceil(len(train_data) / config.active.query_size) - 1),
     )
     # create active learning engine
     al_engine = ActiveEngine(

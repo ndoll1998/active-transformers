@@ -4,19 +4,33 @@ from torch.utils.data import Dataset, Subset
 # import abstract strategy
 from .strategy import ActiveStrategy
 # import other utils
-from itertools import filterfalse
-from typing import Sequence
+from itertools import repeat, filterfalse
+from typing import Sequence, Union
 from math import ceil
 
 class ActiveLoop(object):
+    """ Active Learning Loop running the basic loop selecting
+        samples from the data pool by applying a strategy.
+
+        Can be used as an iterator, running until either the data
+        pool or the sequence of strategies to apply is exhausted.
+
+        Args:
+            pool (Dataset): the pool dataset
+            batch_size (int): batch size with which to process the data pool
+            query_size (int): number of samples to select
+            strategy (Union[ActiveStrategy, Sequence[ActiveStrategy]]):
+                the Active Learning Strategy to use for selection. Also supports
+                a sequence of strategies in which case the strategy at index i is
+                applied in the i-th Active Learning iteration.
+    """
 
     def __init__(
         self,
         pool:Dataset,
         batch_size:int,
         query_size:int,
-        strategy:ActiveStrategy,
-        init_strategy:ActiveStrategy
+        strategy:Union[ActiveStrategy, Sequence[ActiveStrategy]],
     ) -> None:
         self.pool = Subset(
             dataset=pool,
@@ -24,8 +38,27 @@ class ActiveLoop(object):
         )
         self.batch_size = batch_size
         self.query_size = query_size
-        self.strategy = strategy
-        self.init_strategy = init_strategy
+        # sequence of strategies
+        self.strategies = repeat(strategy) if isinstance(strategy, ActiveStrategy) else strategy
+        self.strategies_iter = None # set in reset
+
+        # cache
+        self._cached_strategy = None # updated in step
+
+    @property
+    def strategy(self) -> Union[None, ActiveStrategy]:
+        """ Strategy applied in the last iteration of the loop """
+        return self._cached_strategy
+
+    def reset(self) -> None:
+        # reset data pool
+        self.pool = Subset(
+            dataset=self.pool.dataset,
+            indices=list(range(len(self.pool.dataset)))
+        )
+        self.strategies_iter = iter(self.strategies)
+        # return loop instance
+        return self
 
     def update(self, indices:Sequence[int]) -> Subset:
         # get the data points and remove them from the pool
@@ -40,27 +73,27 @@ class ActiveLoop(object):
         # return data
         return data
 
-    def apply_strategy(self, strategy:ActiveStrategy) -> Subset:
+    def step(self) -> Subset:
+        # check if the data pool is exhausted
+        if len(self.pool) == 0:
+            raise StopIteration
+        # get the strategy to apply in the next iteration
+        # already raises stop-iteration if exhausted
+        self._cached_strategy = next(self.strategies_iter)
         # select samples using strategy
-        indices = strategy.query(
+        indices = self._cached_strategy.query(
             pool=self.pool,
             query_size=min(self.query_size, len(self.pool)),
             batch_size=self.batch_size
         )
+        # update current iteration
         return self.update([self.pool.indices[i] for i in indices])
-
-    def init_step(self) -> Subset:
-        return self.apply_strategy(self.init_strategy)
-
-    def step(self) -> Subset:
-        return self.apply_strategy(self.strategy)
 
     def __len__(self) -> int:
         return ceil(len(self.pool) / self.query_size)
 
     def __iter__(self):
-        # apply initial heuristic
-        yield self.init_step()
-        # apply heuristic unitl pool is empty
-        while len(self.pool) > 0:
-            yield self.step()
+        return self.reset()
+
+    def __next__(self):
+        return self.step()
