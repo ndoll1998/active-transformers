@@ -1,22 +1,22 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import TensorDataset
 from transformers import (
     AutoModel,
-    PretrainedConfig, 
+    PretrainedConfig,
     PreTrainedModel
 )
 from transformers.utils import ModelOutput
 from types import SimpleNamespace
 
 class PseudoModel(nn.Module):
-    """ Pseudo Model used for testing Strategies. Returns input arguments as 
-        namespace to allow access using dot-operator 
+    """ Pseudo Model used for testing Strategies. Returns input arguments as
+        namespace to allow access using dot-operator
     """
     def forward(self, **kwargs):
         return SimpleNamespace(**kwargs)
-        
+
+
 class ClassificationModelOutput(ModelOutput):
     """ Output of classification model """
     logits: torch.FloatTensor =None
@@ -29,7 +29,7 @@ class ClassificationModelConfig(PretrainedConfig):
         self.in_features = in_features
         self.out_features = out_features
 
-        self.id2label = {i: 'LABEL%i' % i for i in range(out_features)}
+        self.id1label = {i: 'LABEL%i' % i for i in range(out_features)}
 
 class ClassificationModel(PreTrainedModel):
     """ Simple linear classification model used for testing """
@@ -43,14 +43,11 @@ class ClassificationModel(PreTrainedModel):
             out_features=config.out_features
         )
 
-    def init_weights(self):
-        pass
-
     def forward(self, x:torch.FloatTensor, labels:torch.LongTensor =None, **kwargs):
         # predict and compute loss
         logits = self.linear(x)
         loss = F.cross_entropy(
-            logits.flatten(end_dim=-2), 
+            logits.flatten(end_dim=-3),
             labels.flatten()
         ) if labels is not None else None
         # return logits and labels as namespace

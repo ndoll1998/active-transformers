@@ -4,11 +4,11 @@ os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import torch
 # import active learning components
-from active.core.utils.data import NamedTensorDataset
-from active.helpers.trainer import Trainer
-from active.helpers.engine import ActiveLearningEngine
+from active.utils.data import NamedTensorDataset
+from active.engine.engine import ActiveEngine
 # import simple model for testing
-from tests.common import (
+from tests.utils.trainer import SimpleTrainer
+from tests.utils.modeling import (
     ClassificationModel,
     ClassificationModelConfig,
     register_classification_model
@@ -22,17 +22,11 @@ class TestActiveLearningEngine:
         # register classification model    
         register_classification_model()
 
-        # create model and optimizer
+        # create model and engine
         model = ClassificationModel(ClassificationModelConfig(2, 2))
-        optim = torch.optim.SGD(model.parameters(), lr=0.01)
-
-        # create al engine
-        engine = ActiveLearningEngine(
-            trainer=Trainer(model, optim, incremental=True),
-            trainer_run_kwargs=dict(
-                max_epochs=5
-            ),
-            val_ratio=1.0 # use all data for training
+        engine = ActiveEngine(
+            trainer=SimpleTrainer(model),
+            train_val_split=1.0 # use all data for training
         )
 
         # create random dataset
@@ -60,13 +54,11 @@ class TestActiveLearningEngine:
         model = ClassificationModel(ClassificationModelConfig(2, 2))
         optim = torch.optim.SGD(model.parameters(), lr=0.01)
 
-        # create al engine
-        engine = ActiveLearningEngine(
-            trainer=Trainer(model, optim, incremental=True),
-            trainer_run_kwargs=dict(
-                max_epochs=5
-            ),
-            val_ratio=0.8 # use 80% for training
+        # create model and engine
+        model = ClassificationModel(ClassificationModelConfig(2, 2))
+        engine = ActiveEngine(
+            trainer=SimpleTrainer(model),
+            train_val_split=0.8 # use 80% for training
         )
 
         # create random dataset

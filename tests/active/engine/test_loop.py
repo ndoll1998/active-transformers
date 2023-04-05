@@ -1,14 +1,14 @@
 import torch
 from torch.utils.data import Subset
 # iport active learning components
-from active.core.loop import ActiveLoop
-from active.core.strategies.random import Random
-from active.core.utils.data import NamedTensorDataset
+from active.engine.loop import ActiveLoop
+from active.strategies.random import Random
+from active.utils.data import NamedTensorDataset
 # import helpers
 import pytest
 
 class TestActiveLoop:
-    """ Test cases for the `ActiveLoop` class """    
+    """ Test cases for the `ActiveLoop` class """
 
     @pytest.mark.parametrize('exec_number', range(5))
     def test_unique_sampling(self, exec_number):
@@ -24,7 +24,7 @@ class TestActiveLoop:
             pool=pool,
             batch_size=4,
             query_size=4,
-            strategy=Random()
+            strategy=Random(),
         )
 
         # get all samples datasets

@@ -1,5 +1,5 @@
 import numpy as np
-from active.core.metrics import AreaUnderLearningCurve
+from active.engine.metrics import AreaUnderLearningCurve
 
 class TestAreaUnderLearningCurve:
     """ Test for area under learning curve metric """
@@ -10,19 +10,19 @@ class TestAreaUnderLearningCurve:
         y = np.linspace(0, 1, x.shape[0])
         # create metric
         area = AreaUnderLearningCurve()
-        
+
         # reset, update with all pairs defining curve
         # and compute final metric score
         area.reset()
         list(map(area.update, zip(x, y)))
         valA = area.compute()
-        
+
         # reset, update with all pairs defining curve
         # and compute final metric score
         area.reset()
         list(map(area.update, zip(x * 30, y)))
         valB = area.compute()
-        
+
         assert valA == valB
 
     def test_linear(self):
@@ -38,7 +38,7 @@ class TestAreaUnderLearningCurve:
         val = area.compute()
         # should be 0.5 since all linear
         assert val == 0.5
-        
+
     def test_quadratic(self):
         # quadratic curve
         x = np.linspace(0, 1, 100)
@@ -53,7 +53,7 @@ class TestAreaUnderLearningCurve:
         # should be < 0.5 since "worse than" linear
         # note that we are in range [0, 1]
         assert val < 0.5
-    
+
     def test_sqrt(self):
         # anti-quadratic curve
         x = np.linspace(0, 1, 100)
