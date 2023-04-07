@@ -1,17 +1,17 @@
 # import active learning components
-from active.core.loop import ActiveLoop
-from active.core.strategies.strategy import AbstractStrategy
+from active.engine.loop import ActiveLoop
+from active.engine.strategy import ActiveStrategy
 # import utils and stuff
-from active.core.utils.data import NamedTensorDataset
+from active.utils.data import NamedTensorDataset
 from typing import List, Optional
 
-def _test_strategy_behavior( 
-    strategy:AbstractStrategy,
+def _test_strategy_behavior(
+    strategy:ActiveStrategy,
     pool:NamedTensorDataset,
     expected_order:List[int],
     batch_size:Optional[int] =4
 ):
-    """ Helper function to test the behaviour of a strategy. 
+    """ Helper function to test the behaviour of a strategy.
 
         Args:
             strategy (AbstractStrategy): strategy to test
@@ -26,8 +26,7 @@ def _test_strategy_behavior(
         pool=pool,
         batch_size=batch_size,
         query_size=1,
-        strategy=strategy,
-        init_strategy=strategy
+        strategy=strategy
     )
     # make sure sampling matches expectation
     for expected_idx, data in zip(expected_order, loop):

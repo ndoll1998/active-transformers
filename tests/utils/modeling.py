@@ -47,7 +47,7 @@ class ClassificationModel(PreTrainedModel):
         # predict and compute loss
         logits = self.linear(x)
         loss = F.cross_entropy(
-            logits.flatten(end_dim=-3),
+            logits.flatten(end_dim=-2), # keep only last dimension corresponding to label space
             labels.flatten()
         ) if labels is not None else None
         # return logits and labels as namespace

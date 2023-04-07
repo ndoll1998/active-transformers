@@ -1,17 +1,21 @@
+# no cuda
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = ''
+
 import torch
 # import uncertainty strategies
-from active.core.strategies.uncertainty import (
+from active.strategies.uncertainty import (
     LeastConfidence,
     PredictionEntropy
 )
 # import utils
-from active.core.utils.data import NamedTensorDataset
-from tests.common import PseudoModel
-from tests.core.strategies.common import _test_strategy_behavior
+from active.utils.data import NamedTensorDataset
+from tests.utils.modeling import PseudoModel
+from tests.utils.strategy import _test_strategy_behavior
 
 class TestUncertaintyStrategies:
     """ Test cases for Uncertainty Strategies """
- 
+
     def test_label_ignoring(self):
         # create least confidence strategy
         strategy = LeastConfidence(

@@ -18,7 +18,6 @@ class TestActiveLoop:
 
         # create sample dataset
         pool = NamedTensorDataset(input_ids=torch.arange(100))
-
         # create active loop
         loop = ActiveLoop(
             pool=pool,
@@ -52,4 +51,67 @@ class TestActiveLoop:
         for i, A in enumerate(idx_sets):
             for B in idx_sets[i+1:]:
                 assert len(A & B) == 0
+
+    def test_reset(self):
+
+        # create sample dataset
+        pool = NamedTensorDataset(input_ids=torch.arange(100))
+        # create active loop
+        loop = ActiveLoop(
+            pool=pool,
+            batch_size=4,
+            query_size=4,
+            strategy=Random()
+        )
+
+        # run loop and reset
+        list(loop)
+        loop.reset()
+        # check
+        assert len(loop.pool) == len(pool), "Expected pool to be reset"
+        assert loop.strategy is None, "Expected strategy to be reset"
+
+    def test_strategy_sequence(self):
+
+        # strategies to apply in each active learning iteration
+        strategies = [Random() for _ in range(5)]
+        # create sample dataset
+        pool = NamedTensorDataset(input_ids=torch.arange(100))
+        # create active loop
+        loop = ActiveLoop(
+            pool=pool,
+            batch_size=4,
+            query_size=4,
+            strategy=strategies,
+        )
+
+        # check if strategies match
+        for s, _ in zip(strategies, loop):
+            assert loop.strategy is s, "Mismatch of strategies"
+
+    def test_exhaust_strategy_sequence(self):
+
+        # strategies to apply in each active learning iteration
+        strategies = [Random() for _ in range(5)]
+        # create sample dataset
+        pool = NamedTensorDataset(input_ids=torch.arange(100))
+        # create active loop
+        loop = ActiveLoop(
+            pool=pool,
+            batch_size=4,
+            query_size=4,
+            strategy=strategies,
+        )
+
+        # run loop manually
+        loop.reset()
+        for _ in strategies:
+            loop.step()
+
+        # test exit iteration
+        try:
+            loop.step()
+            pytest.fail("Expected StopIteration by exhaustion of strategy sequence!")
+        except StopIteration:
+            pass
 

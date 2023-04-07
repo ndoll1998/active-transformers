@@ -3,14 +3,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # import gradient norm
-from active.core.utils.gradnorm import GoodfellowGradientNorm
+from active.strategies.egl.gradnorm import GoodfellowGradientNorm
 
 class TestGoodfellowGradientNorm:
     """ Test cases for Goodfellow Gradient Norm """
 
     @pytest.mark.parametrize('exec_number', range(5))
     def test_goodfellow_grad_norm(self, exec_number):
-        """ Test Gradient Norm Computation using Goodfellow """        
+        """ Test Gradient Norm Computation using Goodfellow """
         # create sample model with linear components
         model = nn.Sequential(
             nn.Linear(2, 4),

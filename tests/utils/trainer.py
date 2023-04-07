@@ -4,6 +4,11 @@ import transformers
 
 from torch.utils.data import Dataset
 
+def accuracy(eval_pred):
+    mask = (eval_pred.label_ids >= 0)
+    acc = (eval_pred.predictions[mask] == eval_pred.label_ids[mask]).sum() / mask.sum()
+    return {'A': acc}
+
 class SimpleTrainer(transformers.Trainer):
 
     def __init__(
@@ -27,7 +32,11 @@ class SimpleTrainer(transformers.Trainer):
                 evaluation_strategy="no",
                 save_strategy="no",
                 no_cuda=True,
-                report_to='none'
-            )
+                report_to='none',
+                # avoid deprecaton warning
+                optim='adamw_torch'
+            ),
+            compute_metrics=accuracy,
+            preprocess_logits_for_metrics=lambda logits, _: logits.argmax(dim=-1),
         )
 

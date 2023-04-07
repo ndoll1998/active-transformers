@@ -1,6 +1,7 @@
+import pytest
 import torch
 from itertools import product
-from active.core.utils.sequence import topk_sequences
+from active.strategies.egl.sequence import topk_sequences
 
 class TestTopKSequences:
     """ Test cases for top-k sequences utility function """
@@ -17,10 +18,10 @@ class TestTopKSequences:
             ]
         )
         S, C = probs.size()
-        
+
         # build sorted sequences using top-k function
         p, _ = topk_sequences(probs, C**S)
-        
+
         # check if posteriors are ordered and sum up to 1
         assert (p == p.sort(descending=True).values).all()
         assert p.sum() == 1.0
@@ -30,11 +31,12 @@ class TestTopKSequences:
             probs[range(S), idx].prod().item()
             for idx in product(range(C), repeat=S)
         ]).sort(descending=True).values
-        
+
         # check if posteriors match
         assert (p == posteriors).all()
- 
-    def test_posteriors_with_random(self):        
+
+    @pytest.mark.parametrize('exec_number', range(5))
+    def test_posteriors_with_random(self, exec_number):
         # create random probabilities
         probs = torch.rand(32, 8)
         probs /= probs.sum(dim=1, keepdims=True)

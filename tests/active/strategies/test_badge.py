@@ -1,7 +1,7 @@
 import pytest
 import warnings
 import transformers
-from active.core.strategies.badge import Badge
+from active.strategies.badge import Badge
 
 class TestBadge:
     """ Tests for Badge Strategy """
@@ -25,7 +25,7 @@ class TestBadge:
             # check expectation
             if not any((message in w.message.args[0]) for w in record):
                 pytest.fail("Expected Warning: %s" % message)
-        
+
         model = transformers.BertForTokenClassification(config)
         with warnings.catch_warnings(record=True) as record:
             # expects no warning

@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # import data helpers
-from active.core.utils.data import NamedTensorDataset
+from active.utils.data import NamedTensorDataset
 # import common components
-from tests.common import (
+from tests.utils.modeling import (
     ClassificationModel,
     ClassificationModelConfig,
 )
 # import egl strategies
-from active.core.strategies.egl import (
+from active.strategies.egl import (
     EglByTopK,
     EglBySampling
 )

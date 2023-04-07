@@ -1,17 +1,14 @@
 import pytest
 import torch
 from torch.utils.data import TensorDataset
-from active.core.strategies.strategy import (
-    AbstractStrategy,
-    ScoreBasedStrategy
-)
-from tests.core.strategies.common import _test_strategy_behavior
+from active.strategies.utils.score import ScoreBasedStrategy
+from tests.utils.strategy import _test_strategy_behavior
 
-class TestAbstractStrategy():
+class TestScoreBasedStrategy():
 
     def test_score_based_strategy_argmax(self):
         """ Test deterministic Score-based strategy """
-                
+
         class Strategy(ScoreBasedStrategy):
             process = lambda self, batch: batch[0]
 
@@ -25,7 +22,7 @@ class TestAbstractStrategy():
 
     @pytest.mark.parametrize('exec_number', range(10))
     def test_score_based_strategy_sampling(self, exec_number):
-        """ Test score-based strategy with random sampling"""        
+        """ Test score-based strategy with random sampling"""
 
         class Strategy(ScoreBasedStrategy):
             process = lambda self, batch: batch[0]
@@ -36,8 +33,8 @@ class TestAbstractStrategy():
 
         # query
         idx = strategy.query(
-            TensorDataset(pool), 
-            query_size=2, 
+            TensorDataset(pool),
+            query_size=2,
             batch_size=2
         )
         # check expectation
