@@ -56,7 +56,9 @@ class ActiveLoop(object):
             dataset=self.pool.dataset,
             indices=list(range(len(self.pool.dataset)))
         )
+        # reset strategy iterator and cached strategy
         self.strategies_iter = iter(self.strategies)
+        self._cached_strategy = None
         # return loop instance
         return self
 
