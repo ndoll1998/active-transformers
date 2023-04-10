@@ -1,7 +1,7 @@
 import pytest
 import torch
 from torch.utils.data import TensorDataset
-from active.strategies.utils.score import ScoreBasedStrategy
+from active.engine.strategies.common.score import ScoreBasedStrategy
 from tests.utils.strategy import _test_strategy_behavior
 
 class TestScoreBasedStrategy():

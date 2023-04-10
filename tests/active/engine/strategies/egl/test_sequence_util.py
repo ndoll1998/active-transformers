@@ -1,7 +1,7 @@
 import pytest
 import torch
 from itertools import product
-from active.strategies.egl.sequence import topk_sequences
+from active.engine.strategies.egl.sequence import topk_sequences
 
 class TestTopKSequences:
     """ Test cases for top-k sequences utility function """

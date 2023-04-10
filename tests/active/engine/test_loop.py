@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import Subset
 # iport active learning components
 from active.engine.loop import ActiveLoop
-from active.strategies.random import Random
+from active.engine.strategies.random import Random
 from active.utils.data import NamedTensorDataset
 # import helpers
 import pytest

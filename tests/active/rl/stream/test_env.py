@@ -1,27 +1,24 @@
+"""
 # disable cuda for tests
 import os
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import torch
 import pytest
-# import reward metric
-from ignite.metrics import Fbeta
 # import active learning components
-from active.core.strategies import Random
-from active.core.utils.data import NamedTensorDataset
-from active.helpers.trainer import Trainer
-from active.helpers.evaluator import Evaluator
-from active.helpers.engine import ActiveLearningEngine
+from active.engine import ActiveEngine
+from active.engine.strategies import Random
 from active.rl.stream.env import StreamBasedEnv
+from active.utils.data import NamedTensorDataset
 # import simple model for testing
-from tests.common import (
+from tests.utils.trainer import SimpleTrainer
+from tests.utils.modeling import (
     ClassificationModel,
     ClassificationModelConfig,
-    register_classification_model 
+    register_classification_model
 )
 
 class TestStreamBasedEnv:
-    """ Test cases for the `StreamBasedEnv` """
 
     def create_sample_env(
         self,
@@ -29,9 +26,9 @@ class TestStreamBasedEnv:
         budget:int =10,
         query_size:int =2,
     ) -> StreamBasedEnv:
-        
-        # register classification model    
-        register_classification_model() 
+
+        # register classification model
+        register_classification_model()
 
         # create random dataset
         dataset = NamedTensorDataset(
@@ -47,14 +44,9 @@ class TestStreamBasedEnv:
 
         # create model and optimizer
         model = ClassificationModel(ClassificationModelConfig(2, 2))
-        optim = torch.optim.SGD(model.parameters(), lr=0.01)
-
         # create al engine
-        engine = ActiveLearningEngine(
-            trainer=Trainer(model, optim, incremental=True),
-            trainer_run_kwargs=dict(
-                max_epochs=5
-            )
+        engine = ActiveEngine(
+            trainer=SimpleTrainer(model),
         )
 
         # create env
@@ -63,7 +55,7 @@ class TestStreamBasedEnv:
             query_size=query_size,
             # AL engine and reward metric
             engine=engine,
-            metric=Fbeta(beta=1.0, output_transform=Evaluator.get_logits_and_labels),
+            metric="A", # accuracy
             # preselection query strategy
             query_strategy=Random(),
             # datasets
@@ -75,10 +67,10 @@ class TestStreamBasedEnv:
             model_sequence_length=1,
             max_num_labels=2
         )
-    
+
     @pytest.mark.parametrize('exec_number', range(10))
     def test_run_until_pool_exhausted(self, exec_number):
- 
+
         # create sample environment
         env = self.create_sample_env(
             pool_size=64,
@@ -98,7 +90,7 @@ class TestStreamBasedEnv:
         # should be done as pool is exhaused
         _, _, done, _ = env.step(env.action_space.sample())
         assert done, "Environment should be done as pool should be exhausted"
-    
+
     @pytest.mark.parametrize('exec_number', range(10))
     def test_reward_system(self, exec_number):
 
@@ -119,3 +111,5 @@ class TestStreamBasedEnv:
         final_metric = env.state.prev_metric
         # check reward sum
         assert sum(rewards) == final_metric, "Rewards of an episode must sum up to the final reward metric!"
+"""
+

@@ -9,7 +9,7 @@ from tests.utils.modeling import (
     ClassificationModelConfig,
 )
 # import egl strategies
-from active.strategies.egl import (
+from active.engine.strategies.egl import (
     EglByTopK,
     EglBySampling
 )

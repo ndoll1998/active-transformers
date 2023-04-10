@@ -3,22 +3,22 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = ''
 
 import torch
-# import uncertainty strategies
-from active.strategies.uncertainty import (
-    LeastConfidence,
-    PredictionEntropy
-)
+# import uncertainty strategy
+from active.engine.strategies.uncertainty.common import UncertaintyStrategy
 # import utils
 from active.utils.data import NamedTensorDataset
 from tests.utils.modeling import PseudoModel
-from tests.utils.strategy import _test_strategy_behavior
 
-class TestUncertaintyStrategies:
-    """ Test cases for Uncertainty Strategies """
+class TestUncertaintyStrategy:
 
     def test_label_ignoring(self):
+
+        class TestStrategy(UncertaintyStrategy):
+            def uncertainty_measure(self, probs):
+                return probs.sum(dim=-1)
+
         # create least confidence strategy
-        strategy = LeastConfidence(
+        strategy = TestStrategy(
             model=PseudoModel(),
             ignore_labels=[0]
         )
@@ -56,41 +56,3 @@ class TestUncertaintyStrategies:
         # check scores
         assert scores[0] == 0.0, "Should be zero because of label ignoring!"
         assert scores[1] > 0.0, "Shouldn't be zero"
-
-    def test_least_confidence(self):
-        # create least confidence strategy
-        strategy = LeastConfidence(model=PseudoModel())
-        # create a sample pool
-        pool = NamedTensorDataset(
-            logits=torch.FloatTensor([
-                [
-                    # very uncertain
-                    [1.0, 1.0, 1.0],
-                    [1.0, 1.0, 1.0],
-                    [1.0, 1.0, 1.0]
-                ],
-                [
-                    # somewhat certain
-                    [1.0, 0.0, 0.8],
-                    [1.0, 0.0, 0.0],
-                    [0.0, 0.0, 1.0],
-                ],
-                [
-                    # very certain
-                    [-1.0, 1.0, -1.0],
-                    [1.0, -1.0, -1.0],
-                    [-1.0, -1.0, 1.0]
-                ],
-            ]),
-            attention_mask=torch.BoolTensor([
-                [True, True, False],
-                [True, False, False],
-                [True, True, True]
-            ])
-        )
-        # test strategy
-        _test_strategy_behavior(
-            strategy=strategy,
-            pool=pool,
-            expected_order=[0, 1, 2]
-        )

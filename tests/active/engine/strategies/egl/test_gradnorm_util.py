@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 # import gradient norm
-from active.strategies.egl.gradnorm import GoodfellowGradientNorm
+from active.engine.strategies.egl.gradnorm import GoodfellowGradientNorm
 
 class TestGoodfellowGradientNorm:
     """ Test cases for Goodfellow Gradient Norm """
