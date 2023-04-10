@@ -14,7 +14,7 @@ from transformers import (
 from sklearn.cluster import KMeans
 from sklearn.neighbors import NearestNeighbors
 # import base class and more
-from active.engine.strategy import ActiveStrategy
+from ..common.strategy import ActiveStrategy
 from active.utils.data import move_to_device
 from typing import Sequence, Any, Optional
 
@@ -48,15 +48,20 @@ class Alps(ActiveStrategy):
         assert 0 < mlm_prob <= 1, "Mask Probability must be in the interval (0, 1]"
         self.mlm_prob = mlm_prob
         self.force_non_zero = force_non_zero
-        # get pretrained name
-        pretrained_name_or_path = model.config.name_or_path
-        assert pretrained_name_or_path is not None, "Expected pretrained model"
+        # create mlm model
+        self.model = AutoModelForMaskedLM.from_config(model.config)
+        self.model.load_state_dict(model.state_dict(), strict=False)
+        self.model = idist.auto_model(self.model)
         # get special token ids
-        tokenizer = AutoTokenizer.from_pretrained(pretrained_name_or_path)
-        self.special_token_ids = torch.LongTensor(tokenizer.all_special_ids)
-        # load the corresponding model with language model head and move to device(s)
-        model = AutoModelForMaskedLM.from_pretrained(pretrained_name_or_path)
-        self.model = idist.auto_model(model)
+        pretrained_name_or_path = model.config.name_or_path
+        if pretrained_name_or_path.strip() != '':
+            # get special token ids
+            tokenizer = AutoTokenizer.from_pretrained(pretrained_name_or_path)
+            self.special_token_ids = torch.LongTensor(tokenizer.all_special_ids)
+        else:
+            # use model state 
+            self.special_token_ids = torch.LongTensor([])
+
 
     @torch.no_grad()
     def process(self, batch:Any) -> torch.FloatTensor:
@@ -131,38 +136,3 @@ class Alps(ActiveStrategy):
             centroids |= set(idx)
         # return indices
         return centroids
-
-class AlpsConstantEmbeddings(Alps):
-
-    def query(
-        self,
-        pool:Subset,
-        query_size:int,
-        batch_size:int
-    ) -> Sequence[int]:
-        """ Query samples to label using the strategy
-
-            Args:
-                pool (Subset): pool of data points from which to sample
-                query_size (int): number of data points to sample from pool
-                batch_size (int): batch size used to process the pool dataset
-
-            Returns:
-                indices (Sequence[int]): indices of selected data points in pool
-        """
-
-        assert isinstance(pool, Subset), "Pool must be a subset to infer selected samples from dataset"
-        # compute emebddings only once at the first call
-        if self.output is None:
-            return super(AlpsConstantEmbeddings, self).query(
-                pool=pool,
-                query_size=query_size,
-                batch_size=batch_size
-            )
-
-        # remove items that were sampled in previous runs
-        assert len(pool.dataset) == self.output.size(0), "Mismatch between embeddings and dataset"
-        embeds = self.output[pool.indices]
-
-        # sample from remaining embeddings
-        return self.sample(embeds, query_size)

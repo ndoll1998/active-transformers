@@ -263,6 +263,10 @@ class TrainerConfig(transformers.TrainingArguments):
     fsdp:Union[str, List[transformers.trainer_utils.FSDPOption]]              =""
     fsdp_config:Union[None, str, dict]                                        =None
 
+    # use pytorch implementation of AdamW optimizer
+    # to avoid deprecation warning
+    optim="adamw_torch"
+
     @pydantic.root_validator()
     def _format_output_directory(cls, values):
         # get timestamp

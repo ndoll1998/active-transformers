@@ -2,7 +2,7 @@
 import torch
 from torch.utils.data import Dataset, Subset
 # import abstract strategy
-from .strategy import ActiveStrategy
+from .strategies.common.strategy import ActiveStrategy
 # import other utils
 from itertools import repeat, filterfalse
 from typing import Sequence, Union

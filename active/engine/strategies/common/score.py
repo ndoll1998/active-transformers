@@ -1,7 +1,7 @@
 import torch
 # import ignite events and abstract strategy
 from ignite.engine import Events
-from active.engine.strategy import ActiveStrategy
+from .strategy import ActiveStrategy
 # other utils
 from typing import Optional, Sequence
 

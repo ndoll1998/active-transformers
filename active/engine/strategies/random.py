@@ -2,7 +2,7 @@
 import torch
 from torch.utils.data import Dataset
 # import base class
-from active.engine.strategy import ActiveStrategy
+from .common.strategy import ActiveStrategy
 # other utils
 from typing import Sequence
 
